@@ -18,6 +18,7 @@ use esp_wifi::{self, wifi::{Configuration,AccessPointConfiguration}};
 use edge_http::{io::{server::{self as http, Handler}, Error}, Method};
 //use esp_hal_dhcp_server::{structs::DhcpServerConfig, simple_leaser::SingleDhcpLeaser};
 use edge_nal_embassy::TcpBuffers;
+use embedded_websocket as ws;
 
 const CONNECTION_TIMEOUT_MS: u32 = 30_000;
 
@@ -72,16 +73,29 @@ impl Handler for MyHttpHandler {
     where
         T: Read + Write 
     {
-        let headers = conn.headers()?;
         println!("Got a request! Task id: {task_id}");
+        let request_headers = conn.headers()?;
 
-        if Method::Get != headers.method {
+        // Check if the request really is a Websocket handshake.
+        let ws_headers = ws::read_http_header(
+            request_headers.headers.iter().map(|h| (h.0, h.1.as_bytes()))
+        );
+        if let Ok(ws_headers) = ws_headers {
+            if let Some(ws_context) = ws_headers {
+                println!("WebSocket handshake! Subprotocols: {:?} | Secure Key: {}", ws_context.sec_websocket_protocol_list, ws_context.sec_websocket_key);
+
+                return Ok(());
+            }
+        }
+
+        // Handle non-websocket requests.
+        if Method::Get != request_headers.method {
             conn.initiate_response(405, Some("Method Not Allowed."), &[]).await?;
-        } else if "/" != headers.path {
+        } else if "/" != request_headers.path {
             conn.initiate_response(404, Some("Only the '/' path works right now."), &[]).await?;
+            conn.write_all(b"Could not find the resource.").await?;
         } else {
             conn.initiate_response(200, Some("OK"), &[("Content-Type", "text/html")]).await?;
-            
             conn.write_all(include_bytes!("web_page.html")).await?;
         }
 
