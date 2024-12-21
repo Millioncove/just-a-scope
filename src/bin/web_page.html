@@ -1,1 +1,572 @@
-<h1>Yep this can actually be included!</h1>
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Oscilloscope Display</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        body {
+            font-family: monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        .scope-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #oscilloscope {
+            background: black;
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: move;
+        }
+
+        .axis-label {
+            position: absolute;
+            color: #00ff00;
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .y-axis-label {
+            transform: rotate(-90deg);
+            left: 10px;
+            top: 50%;
+        }
+
+        .x-axis-label {
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .controls-overlay {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-left: 1px solid #00ff00;
+            border-bottom: 1px solid #00ff00;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+        }
+
+        .controls-overlay.visible {
+            transform: translateX(0);
+        }
+
+        .control-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        input {
+            background: #333;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 5px;
+            width: 80px;
+        }
+
+        button {
+            background: #006600;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #008800;
+        }
+
+        #toggleControls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+
+        .zoom-info {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 5px 10px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .zoom-info.visible {
+            opacity: 1;
+        }
+
+        .axis-control {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            background: #006600;
+            border: 2px solid #00ff00;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 20px;
+            user-select: none;
+            z-index: 100;
+        }
+
+        .axis-control:hover {
+            background: #008800;
+        }
+
+        .axis-control.vertical {
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .axis-control.horizontal {
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .scale-indicator {
+            position: absolute;
+            background: rgba(0, 102, 0, 0.8);
+            border: 1px solid #00ff00;
+            padding: 5px;
+            border-radius: 3px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .scale-indicator.visible {
+            opacity: 1;
+        }
+
+        .scale-indicator.vertical {
+            right: 60px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .scale-indicator.horizontal {
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="scope-container">
+        <div class="axis-control vertical" id="voltageControl">⬍</div>
+        <div class="axis-control horizontal" id="timeControl">⬌</div>
+        <div class="scale-indicator vertical" id="voltageIndicator"></div>
+        <div class="scale-indicator horizontal" id="timeIndicator"></div>
+        <canvas id="oscilloscope"></canvas>
+        <div class="axis-label y-axis-label">Voltage (V)</div>
+        <div class="axis-label x-axis-label">Time (s)</div>
+        <button id="toggleControls">☰</button>
+        <div class="zoom-info">Use two fingers to zoom, one finger to pan</div>
+
+        <div class="controls-overlay">
+            <div class="control-group">
+                <label>V/div:</label>
+                <input type="number" id="voltsPerDiv" value="2" step="0.1" min="0.1">
+                <span>V</span>
+            </div>
+            <div class="control-group">
+                <label>T/div:</label>
+                <input type="number" id="timePerDiv" value="0.5" step="0.1" min="0.1">
+                <span>s</span>
+            </div>
+            <div class="control-group">
+                <label>Time:</label>
+                <input type="number" id="newTime" placeholder="seconds">
+            </div>
+            <div class="control-group">
+                <label>Voltage:</label>
+                <input type="number" id="newVoltage" placeholder="volts">
+            </div>
+            <button onclick="addPoint()">Add Point</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('oscilloscope');
+        const ctx = canvas.getContext('2d');
+        const controls = document.querySelector('.controls-overlay');
+        const toggleButton = document.getElementById('toggleControls');
+        const zoomInfo = document.querySelector('.zoom-info');
+        let data = [];
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        let centerX = 0;
+        let centerY = 0;
+        let voltsPerDiv = 2;
+        let timePerDiv = 0.5;
+        let lastPinchDistance = null;
+        const DIVISIONS_X = 10;
+        const DIVISIONS_Y = 8;
+        const voltageControl = document.getElementById('voltageControl');
+        const timeControl = document.getElementById('timeControl');
+        const voltageIndicator = document.getElementById('voltageIndicator');
+        const timeIndicator = document.getElementById('timeIndicator');
+        let isScalingVoltage = false;
+        let isScalingTime = false;
+        let scaleStartY = 0;
+        let scaleStartX = 0;
+        let startVoltsPerDiv = 0;
+        let startTimePerDiv = 0;
+
+        // Mouse event handlers for panning
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) { // Left mouse button
+                isDragging = true;
+                lastX = e.clientX;
+                lastY = e.clientY;
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const deltaX = e.clientX - lastX;
+                const deltaY = e.clientY - lastY;
+
+                centerX -= (deltaX / canvas.width) * (timePerDiv * DIVISIONS_X);
+                centerY += (deltaY / canvas.height) * (voltsPerDiv * DIVISIONS_Y);
+
+                lastX = e.clientX;
+                lastY = e.clientY;
+
+                drawData();
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            isDragging = false;
+        });
+
+        // Voltage scaling control
+        voltageControl.addEventListener('mousedown', (e) => {
+            isScalingVoltage = true;
+            scaleStartY = e.clientY;
+            startVoltsPerDiv = voltsPerDiv;
+            voltageIndicator.classList.add('visible');
+            e.preventDefault();
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isScalingVoltage) {
+                const deltaY = e.clientY - scaleStartY;
+                const scaleFactor = Math.exp(deltaY * 0.01);
+                voltsPerDiv = startVoltsPerDiv * scaleFactor;
+                document.getElementById('voltsPerDiv').value = voltsPerDiv.toFixed(2);
+                voltageIndicator.textContent = voltsPerDiv.toFixed(2) + ' V/div';
+                drawData();
+            }
+        });
+
+        // Time scaling control
+        timeControl.addEventListener('mousedown', (e) => {
+            isScalingTime = true;
+            scaleStartX = e.clientX;
+            startTimePerDiv = timePerDiv;
+            timeIndicator.classList.add('visible');
+            e.preventDefault();
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isScalingTime) {
+                const deltaX = e.clientX - scaleStartX;
+                const scaleFactor = Math.exp(deltaX * 0.01);
+                timePerDiv = startTimePerDiv * scaleFactor;
+                document.getElementById('timePerDiv').value = timePerDiv.toFixed(2);
+                timeIndicator.textContent = timePerDiv.toFixed(2) + ' s/div';
+                drawData();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isScalingVoltage = false;
+            isScalingTime = false;
+            voltageIndicator.classList.remove('visible');
+            timeIndicator.classList.remove('visible');
+        });
+
+        // Touch events for axis controls
+        voltageControl.addEventListener('touchstart', (e) => {
+            isScalingVoltage = true;
+            scaleStartY = e.touches[0].clientY;
+            startVoltsPerDiv = voltsPerDiv;
+            voltageIndicator.classList.add('visible');
+            e.preventDefault();
+        });
+
+        timeControl.addEventListener('touchstart', (e) => {
+            isScalingTime = true;
+            scaleStartX = e.touches[0].clientX;
+            startTimePerDiv = timePerDiv;
+            timeIndicator.classList.add('visible');
+            e.preventDefault();
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (isScalingVoltage) {
+                const deltaY = e.touches[0].clientY - scaleStartY;
+                const scaleFactor = Math.exp(deltaY * 0.01);
+                voltsPerDiv = startVoltsPerDiv * scaleFactor;
+                document.getElementById('voltsPerDiv').value = voltsPerDiv.toFixed(2);
+                voltageIndicator.textContent = voltsPerDiv.toFixed(2) + ' V/div';
+                drawData();
+                e.preventDefault();
+            } else if (isScalingTime) {
+                const deltaX = e.touches[0].clientX - scaleStartX;
+                const scaleFactor = Math.exp(deltaX * 0.01);
+                timePerDiv = startTimePerDiv * scaleFactor;
+                document.getElementById('timePerDiv').value = timePerDiv.toFixed(2);
+                timeIndicator.textContent = timePerDiv.toFixed(2) + ' s/div';
+                drawData();
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('touchend', () => {
+            isScalingVoltage = false;
+            isScalingTime = false;
+            voltageIndicator.classList.remove('visible');
+            timeIndicator.classList.remove('visible');
+        });
+
+        // Resize canvas to fill window
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            drawData();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Initialize with sample data
+        for (let t = 0; t < 4; t += 0.1) {
+            data.push({
+                time: t,
+                voltage: 5 * Math.sin(2 * Math.PI * t)
+            });
+        }
+
+        // Toggle controls visibility
+        toggleButton.addEventListener('click', () => {
+            controls.classList.toggle('visible');
+        });
+
+        // Show zoom info temporarily
+        setTimeout(() => {
+            zoomInfo.classList.add('visible');
+            setTimeout(() => zoomInfo.classList.remove('visible'), 3000);
+        }, 1000);
+
+        function getPinchDistance(event) {
+            const touch1 = event.touches[0];
+            const touch2 = event.touches[1];
+            return Math.hypot(
+                touch1.clientX - touch2.clientX,
+                touch1.clientY - touch2.clientY
+            );
+        }
+
+        // Touch event handlers
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                // Pinch to zoom
+                lastPinchDistance = getPinchDistance(e);
+            } else if (e.touches.length === 1) {
+                // Single finger pan
+                isDragging = true;
+                lastX = e.touches[0].clientX;
+                lastY = e.touches[0].clientY;
+            }
+            e.preventDefault();
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && lastPinchDistance !== null) {
+                // Pinch to zoom
+                const currentDistance = getPinchDistance(e);
+                const scale = currentDistance / lastPinchDistance;
+
+                voltsPerDiv /= scale;
+                timePerDiv /= scale;
+
+                document.getElementById('voltsPerDiv').value = voltsPerDiv.toFixed(2);
+                document.getElementById('timePerDiv').value = timePerDiv.toFixed(2);
+
+                lastPinchDistance = currentDistance;
+                drawData();
+            } else if (e.touches.length === 1 && isDragging) {
+                // Single finger pan
+                const deltaX = e.touches[0].clientX - lastX;
+                const deltaY = e.touches[0].clientY - lastY;
+
+                centerX -= (deltaX / canvas.width) * (timePerDiv * DIVISIONS_X);
+                centerY += (deltaY / canvas.height) * (voltsPerDiv * DIVISIONS_Y);
+
+                lastX = e.touches[0].clientX;
+                lastY = e.touches[0].clientY;
+
+                drawData();
+            }
+            e.preventDefault();
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            isDragging = false;
+            lastPinchDistance = null;
+            if (e.touches.length === 0) {
+                // All fingers lifted
+                e.preventDefault();
+            }
+        });
+
+        // Rest of the oscilloscope code remains the same as before
+        function drawGrid() {
+            const gridSizeX = canvas.width / DIVISIONS_X;
+            const gridSizeY = canvas.height / DIVISIONS_Y;
+
+            ctx.strokeStyle = '#003300';
+            ctx.lineWidth = 1;
+
+            // Draw vertical grid lines and time labels
+            for (let i = 0; i <= DIVISIONS_X; i++) {
+                const x = i * gridSizeX;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+
+                const time = ((i - DIVISIONS_X / 2) * timePerDiv + centerX).toFixed(2);
+                ctx.fillStyle = '#00ff00';
+                ctx.textAlign = 'center';
+                ctx.fillText(time + 's', x, canvas.height - 5);
+            }
+
+            // Draw horizontal grid lines and voltage labels
+            for (let i = 0; i <= DIVISIONS_Y; i++) {
+                const y = i * gridSizeY;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+
+                const voltage = (((DIVISIONS_Y / 2) - i) * voltsPerDiv + centerY).toFixed(1);
+                ctx.fillStyle = '#00ff00';
+                ctx.textAlign = 'right';
+                ctx.fillText(voltage + 'V', canvas.width - 5, y + 4);
+            }
+
+            // Draw center axes
+            ctx.strokeStyle = '#006600';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2, 0);
+            ctx.lineTo(canvas.width / 2, canvas.height);
+            ctx.moveTo(0, canvas.height / 2);
+            ctx.lineTo(canvas.width, canvas.height / 2);
+            ctx.stroke();
+        }
+
+        function mapValue(value, inMin, inMax, outMin, outMax) {
+            return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
+        }
+
+        function drawData() {
+            const xMin = centerX - (DIVISIONS_X / 2) * timePerDiv;
+            const xMax = centerX + (DIVISIONS_X / 2) * timePerDiv;
+            const yMin = centerY - (DIVISIONS_Y / 2) * voltsPerDiv;
+            const yMax = centerY + (DIVISIONS_Y / 2) * voltsPerDiv;
+
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawGrid();
+
+            if (data.length < 2) return;
+
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            data.forEach((point, i) => {
+                const x = mapValue(point.time, xMin, xMax, 0, canvas.width);
+                const y = mapValue(point.voltage, yMax, yMin, 0, canvas.height);
+
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+
+            ctx.stroke();
+        }
+
+        function addPoint() {
+            const time = parseFloat(document.getElementById('newTime').value);
+            const voltage = parseFloat(document.getElementById('newVoltage').value);
+
+            if (!isNaN(time) && !isNaN(voltage)) {
+                data.push({ time, voltage });
+                data.sort((a, b) => a.time - b.time);
+                drawData();
+
+                document.getElementById('newTime').value = '';
+                document.getElementById('newVoltage').value = '';
+            }
+        }
+
+        function updateDivisions() {
+            voltsPerDiv = parseFloat(document.getElementById('voltsPerDiv').value);
+            timePerDiv = parseFloat(document.getElementById('timePerDiv').value);
+            drawData();
+        }
+
+        // Add input event listeners
+        document.getElementById('voltsPerDiv').addEventListener('change', updateDivisions);
+        document.getElementById('timePerDiv').addEventListener('change', updateDivisions);
+
+        // Initial draw
+        drawData();
+    </script>
+</body>
+
+</html>

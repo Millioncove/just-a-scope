@@ -11,7 +11,7 @@ use embedded_io_async::{Read, Write};
 use embassy_net::{Config, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
-use esp_hal::{prelude::*,delay::Delay, gpio::{Level,Output}, peripherals::Peripherals, rng::Rng, timer::timg::TimerGroup};
+use esp_hal::{prelude::*, gpio::{Level,Output}, peripherals::Peripherals, rng::Rng, timer::timg::TimerGroup};
 use esp_println::println;
 use esp_wifi::wifi::{WifiApDevice, WifiDevice};
 use esp_wifi::{self, wifi::{Configuration,AccessPointConfiguration}};
@@ -76,13 +76,11 @@ impl Handler for MyHttpHandler {
         println!("Got a request! Task id: {task_id}");
 
         if Method::Get != headers.method {
-            conn.initiate_response(405, Some("Method Not Allowed."), &[])
-                .await?;
+            conn.initiate_response(405, Some("Method Not Allowed."), &[]).await?;
         } else if "/" != headers.path {
             conn.initiate_response(404, Some("Only the '/' path works right now."), &[]).await?;
         } else {
-            conn.initiate_response(200, Some("OK"), &[("Content-Type", "text/html")])
-                .await?;
+            conn.initiate_response(200, Some("OK"), &[("Content-Type", "text/html")]).await?;
             
             conn.write_all(include_bytes!("web_page.html")).await?;
         }
