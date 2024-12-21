@@ -1,0 +1,7 @@
+{
+    "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.check.targets": "xtensa-esp32s3-none-elf",
+    "rust-analyzer.runnables.extraArgs": [
+        "--release"
+    ]
+}

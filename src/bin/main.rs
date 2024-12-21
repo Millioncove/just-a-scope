@@ -16,7 +16,6 @@ use esp_println::println;
 use esp_wifi::wifi::{WifiApDevice, WifiDevice};
 use esp_wifi::{self, wifi::{Configuration,AccessPointConfiguration}};
 use edge_http::{io::{server::{self as http, Handler}, Error}, Method};
-//use esp_hal_dhcp_server::{structs::DhcpServerConfig, simple_leaser::SingleDhcpLeaser};
 use edge_nal_embassy::TcpBuffers;
 use embedded_websocket as ws;
 
@@ -27,39 +26,6 @@ const CONNECTION_TIMEOUT_MS: u32 = 30_000;
 async fn marathon (mut runner: Runner<'static, WifiDevice<'static, WifiApDevice>>) {
     runner.run().await
 }
-
-/*#[embassy_executor::task]
-async fn dhcp_server(stack: Stack<'static>) {
-    let config = DhcpServerConfig {
-        ip: Ipv4Addr::new(192, 168, 1, 1),
-        lease_time: Duration::from_secs(1800),
-        gateways: &[],
-        subnet: None,
-        dns: &[]
-    };
-
-    let mut leaser = SingleDhcpLeaser::new(Ipv4Addr::new(192, 168, 1, 111));
-
-    esp_hal_dhcp_server::run_dhcp_server(stack, config, &mut leaser).await;
-}*/
-
-/*#[embassy_executor::task]
-async fn tcp_test(stack: Stack<'static>) {
-    let buffers: TcpBuffers<1, 500, 500> = TcpBuffers::new();
-    let mut tcp: Tcp<1, 500, 500> = Tcp::new(stack, &buffers);
-    
-    tcp_socket.accept(IpListenEndpoint{addr: None, port: 80}).await.expect("Failed to start listening on tcp port.");
-
-    let mut buf = [0; 1024];
-    loop {
-        let size_received = tcp_socket.read(&mut buf).await;
-        match size_received {
-            Ok(0) => panic!("Our tcp socket was closed while we expected to read from it!"),
-            Ok(n) => println!("received {n} from! I have no clue where from!"),
-            Err(e) => panic!("{:?}", e),
-        }
-    }
-}*/
 
 struct MyHttpHandler;
 
@@ -76,7 +42,7 @@ impl Handler for MyHttpHandler {
         println!("Got a request! Task id: {task_id}");
         let request_headers = conn.headers()?;
 
-        // Check if the request really is a Websocket handshake.
+        // Check if the request is a WebSocket handshake.
         let ws_headers = ws::read_http_header(
             request_headers.headers.iter().map(|h| (h.0, h.1.as_bytes()))
         );
@@ -88,7 +54,7 @@ impl Handler for MyHttpHandler {
             }
         }
 
-        // Handle non-websocket requests.
+        // Handle non-WebSocket requests.
         if Method::Get != request_headers.method {
             conn.initiate_response(405, Some("Method Not Allowed."), &[]).await?;
         } else if "/" != request_headers.path {
@@ -146,15 +112,10 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         gateway: Some(Ipv4Addr::new(192, 168, 1, 1)),
         dns_servers: Default::default()
     });
-    
     let boxed_resources = Box::new(StackResources::<16>::new());
     let leaked_resources = Box::leak(boxed_resources);
     let random_seed = 687486766; // Extremely secure!
     let (stack, runner) = embassy_net::new(device, stack_conf, leaked_resources, random_seed);
-    
-    
-    
-
 
     // Access point configuration and startup.
     let ap_conf: AccessPointConfiguration = AccessPointConfiguration {
@@ -177,9 +138,6 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         }
         embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
     }
-    
-    //println!("Starting tcp testing!");
-    //spawner.spawn(tcp_test(stack)).expect("Could not spawn tcp test task.");
 
     println!("Starting http server!");
     spawner.spawn(http_server(stack, Ipv4Addr::new(192, 168, 1, 1))).expect("Failed to spawn http server task.");
@@ -188,7 +146,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let mut led: Output = Output::new(peripherals.GPIO21, Level::Low);
     println!("The setup didn't crash! Starting blink loop...");
     loop {
-        Timer::after(Duration::from_millis(2000)).await;
+        Timer::after(Duration::from_millis(3000)).await;
         led.toggle();
     }
 }
