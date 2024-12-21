@@ -3,17 +3,23 @@
 
 extern crate alloc;
 
-use core::net::Ipv4Addr;
+use core::{ fmt::Debug, net::{Ipv4Addr, SocketAddrV4}};
 use alloc::boxed::Box;
 
-use embassy_net::{tcp::TcpSocket, Config, IpListenEndpoint, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4};
+use edge_nal::TcpBind;
+use embedded_io_async::{Read, Write};
+use embassy_net::{Config, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{prelude::*,delay::Delay, gpio::{Level,Output}, peripherals::Peripherals, rng::Rng, timer::timg::TimerGroup};
 use esp_println::println;
 use esp_wifi::wifi::{WifiApDevice, WifiDevice};
 use esp_wifi::{self, wifi::{Configuration,AccessPointConfiguration}};
-use esp_hal_dhcp_server::{structs::DhcpServerConfig, simple_leaser::SingleDhcpLeaser};
+use edge_http::{io::{server::{self as http, Handler}, Error}, Method};
+//use esp_hal_dhcp_server::{structs::DhcpServerConfig, simple_leaser::SingleDhcpLeaser};
+use edge_nal_embassy::TcpBuffers;
+
+const CONNECTION_TIMEOUT_MS: u32 = 30_000;
 
 // Get it? Because it's just running all the time :D
 #[embassy_executor::task]
@@ -21,7 +27,7 @@ async fn marathon (mut runner: Runner<'static, WifiDevice<'static, WifiApDevice>
     runner.run().await
 }
 
-#[embassy_executor::task]
+/*#[embassy_executor::task]
 async fn dhcp_server(stack: Stack<'static>) {
     let config = DhcpServerConfig {
         ip: Ipv4Addr::new(192, 168, 1, 1),
@@ -34,24 +40,69 @@ async fn dhcp_server(stack: Stack<'static>) {
     let mut leaser = SingleDhcpLeaser::new(Ipv4Addr::new(192, 168, 1, 111));
 
     esp_hal_dhcp_server::run_dhcp_server(stack, config, &mut leaser).await;
-}
+}*/
 
-#[embassy_executor::task]
+/*#[embassy_executor::task]
 async fn tcp_test(stack: Stack<'static>) {
-    let mut tcp_rx_buffer = [0u8;500];
-    let mut tcp_tx_buffer = [0u8;500];
-    let mut tcp_socket: TcpSocket<'_> = TcpSocket::new(stack, &mut tcp_rx_buffer, &mut tcp_tx_buffer);
+    let buffers: TcpBuffers<1, 500, 500> = TcpBuffers::new();
+    let mut tcp: Tcp<1, 500, 500> = Tcp::new(stack, &buffers);
+    
     tcp_socket.accept(IpListenEndpoint{addr: None, port: 80}).await.expect("Failed to start listening on tcp port.");
 
     let mut buf = [0; 1024];
-        loop {
-            let size_received = tcp_socket.read(&mut buf).await;
-            match size_received {
-                Ok(0) => panic!("Our tcp socket was closed while we expected to read from it!"),
-                Ok(n) => println!("received {n} from! I have no clue where from!"),
-                Err(e) => panic!("{:?}", e),
-            }
+    loop {
+        let size_received = tcp_socket.read(&mut buf).await;
+        match size_received {
+            Ok(0) => panic!("Our tcp socket was closed while we expected to read from it!"),
+            Ok(n) => println!("received {n} from! I have no clue where from!"),
+            Err(e) => panic!("{:?}", e),
         }
+    }
+}*/
+
+struct MyHttpHandler;
+
+impl Handler for MyHttpHandler {
+    type Error<T: Debug> = Error<T>;
+    async fn handle<T, const N: usize>(
+        &self,
+        task_id: impl core::fmt::Display + Copy,
+        conn: &mut http::Connection<'_, T, N>,
+    ) -> Result<(), Self::Error<T::Error>>
+    where
+        T: Read + Write 
+    {
+        let headers = conn.headers()?;
+        println!("Got a request! Task id: {task_id}");
+
+        if Method::Get != headers.method {
+            conn.initiate_response(405, Some("Method Not Allowed."), &[])
+                .await?;
+        } else if "/" != headers.path {
+            conn.initiate_response(404, Some("Only the '/' path works right now."), &[]).await?;
+        } else {
+            conn.initiate_response(200, Some("OK"), &[("Content-Type", "text/html")])
+                .await?;
+            
+            conn.write_all(include_bytes!("web_page.html")).await?;
+        }
+
+        Ok(())
+    }
+    
+}
+
+#[embassy_executor::task]
+async fn http_server (stack: Stack<'static>, ip: Ipv4Addr) {
+    let mut server = http::DefaultServer::new();
+
+    let buffers: TcpBuffers<8, 500, 500> = TcpBuffers::new();
+    let tcp_instance: edge_nal_embassy::Tcp<'_, 8, 500, 500> = edge_nal_embassy::Tcp::new(stack, &buffers);
+    let http_socket = tcp_instance.bind(core::net::SocketAddr::V4(SocketAddrV4::new(ip, 80)))
+    .await.expect("Failed to bind http socket.");
+    
+
+    server.run(Some(CONNECTION_TIMEOUT_MS), http_socket, MyHttpHandler).await.expect("Actually running the http server failed.");
 }
 
 #[main]
@@ -84,7 +135,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         dns_servers: Default::default()
     });
     
-    let boxed_resources = Box::new(StackResources::<3>::new());
+    let boxed_resources = Box::new(StackResources::<16>::new());
     let leaked_resources = Box::leak(boxed_resources);
     let random_seed = 687486766; // Extremely secure!
     let (stack, runner) = embassy_net::new(device, stack_conf, leaked_resources, random_seed);
@@ -115,23 +166,17 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
     }
     
-    println!("Starting dhcp server!");
-    let s = stack.clone();
-    spawner.spawn(dhcp_server(stack)).expect("Could not spawn dhcp server task.");
+    //println!("Starting tcp testing!");
+    //spawner.spawn(tcp_test(stack)).expect("Could not spawn tcp test task.");
 
-    println!("Starting tcp testing!");
-    spawner.spawn(tcp_test(stack)).expect("Could not spawn tcp test task.");
-
-    Timer::after(Duration::from_secs(120)).await;
-    println!("Closing dhcp server after 2m...");
-    esp_hal_dhcp_server::dhcp_close();
+    println!("Starting http server!");
+    spawner.spawn(http_server(stack, Ipv4Addr::new(192, 168, 1, 1))).expect("Failed to spawn http server task.");
 
     // Blinky.
     let mut led: Output = Output::new(peripherals.GPIO21, Level::Low);
-    let delay: Delay = Delay::new();
-    println!("The setup didn't crash! Starting main loop...");
+    println!("The setup didn't crash! Starting blink loop...");
     loop {
-        delay.delay(1000.millis());
+        Timer::after(Duration::from_millis(2000)).await;
         led.toggle();
     }
 }
