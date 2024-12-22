@@ -1429,6 +1429,7 @@ dependencies = [
  "esp-wifi",
  "heapless 0.8.0",
  "httparse",
+ "zerocopy",
 ]
 
 [[package]]
@@ -1639,6 +1640,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11277b1e4cbb7ffe44678c668518b249c843c81df249b8f096701757bc50d7ee"
 dependencies = [
  "darling",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.8.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67914ab451f3bfd2e69e5e9d2ef3858484e7074d63f204fd166ec391b54de21d"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7988d73a4303ca289df03316bc490e934accf371af6bc745393cf3c2c5c4f25d"
+dependencies = [
  "proc-macro2",
  "quote",
  "syn",

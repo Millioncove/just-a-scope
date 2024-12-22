@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use core::{ fmt::Debug, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, str};
+use core::{ fmt::Debug, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, ptr::slice_from_raw_parts};
 use alloc::boxed::Box;
 
 use edge_nal::{TcpAccept, TcpBind};
@@ -17,13 +17,36 @@ use esp_wifi::wifi::{WifiApDevice, WifiDevice};
 use esp_wifi::{self, wifi::{Configuration,AccessPointConfiguration}};
 use edge_http::{io::{server::{self as http, Handler}, Error}, Method};
 use edge_nal_embassy::TcpBuffers;
-use embedded_websocket::{self as ws, WebSocket};
-use heapless::String;
+use embedded_websocket::{self as ws};
+use websocket_frame::BareWebSocketFrame;
+use zerocopy::IntoBytes;
+
+mod websocket_frame {
+
+    #[derive(Clone, Copy, zerocopy::IntoBytes, zerocopy::FromBytes)]
+    #[repr(C)]
+    pub struct BareWebSocketFrame<const L: usize> {
+        fin_rsv_opcode: u8,
+        mask_and_length: u8,
+        pub payload: [u8; L]
+    }
+    
+    impl<const L: usize> BareWebSocketFrame<L> {
+        pub const fn new() -> BareWebSocketFrame<L> {
+            let fin: u8 =       0b10000000;
+            let opcode: u8 =    0x2; // Binary data.
+
+            let fin_rsv_opcode = fin | opcode;
+
+            BareWebSocketFrame { fin_rsv_opcode, mask_and_length: (L % 128usize) as u8, payload: [0u8; L] }
+        }
+    }
+}
 
 const CONNECTION_TIMEOUT_MS: u32 = 30_000;
 const GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
-const WEB_SOCKET_PORT: u16 = 43822;
-const WEB_SOCKET_ENDPOINT: SocketAddrV4 = SocketAddrV4::new(GATEWAY_ADDRESS, WEB_SOCKET_PORT);
+const WEBSOCKET_PORT: u16 = 43822;
+const WEBSOCKET_ENDPOINT: SocketAddrV4 = SocketAddrV4::new(GATEWAY_ADDRESS, WEBSOCKET_PORT);
 
 // Get it? Because it's just running all the time :D
 #[embassy_executor::task]
@@ -119,9 +142,17 @@ async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) 
         ).expect("Creating WebSocket handshake response failed.");
         web_socket.write_all(&handshake_approval[..len])
         .await.expect("Could not write the WebSocket handshake response to the socket.");
-        web_socket.flush().await.expect("Flushing the WebSocket failed.");
+        //web_socket.flush().await.expect("Flushing the WebSocket failed.");
         
         println!("WebSocket connection should be successfully opened on {}.", endpoint);
+
+        // Send data to the WebSocket.
+        let mut ws_frame = websocket_frame::BareWebSocketFrame::<10>::new();
+        ws_frame.payload = b"ABCDEFGHIJ".clone();
+        let ws_frame_bytes = ws_frame.as_mut_bytes();
+        web_socket.write_all(ws_frame_bytes)
+            .await.expect("Could not write more data after establishing connection.");
+        web_socket.flush().await.expect("Flushing the WebSocket failed.");
     }
 }
 
@@ -185,7 +216,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     println!("Starting http server!");
     spawner.spawn(http_server(stack, GATEWAY_ADDRESS)).expect("Failed to spawn http server task.");
     println!("Starting WebSocket server!");
-    spawner.spawn(web_socket_server(stack, SocketAddr::V4(WEB_SOCKET_ENDPOINT))).expect("Failed to spawn http server task.");
+    spawner.spawn(web_socket_server(stack, SocketAddr::V4(WEBSOCKET_ENDPOINT))).expect("Failed to spawn http server task.");
 
     // Blinky.
     let mut led: Output = Output::new(peripherals.GPIO21, Level::Low);
