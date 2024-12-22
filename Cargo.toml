@@ -27,6 +27,7 @@ edge-http = {git = "https://github.com/ivmarkov/edge-net.git", branch = "embassy
 edge-nal-embassy = {git = "https://github.com/ivmarkov/edge-net.git", branch = "embassy-net-05"}
 edge-nal = {git = "https://github.com/ivmarkov/edge-net.git", branch = "embassy-net-05"}
 embedded-websocket = { version = "0.9.4", default-features = false }
+httparse = {version = "1.9.5", default-features = false }
 
 [profile.dev.package.esp-wifi]
 opt-level = 3

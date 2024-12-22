@@ -243,6 +243,15 @@
         let scaleStartX = 0;
         let startVoltsPerDiv = 0;
         let startTimePerDiv = 0;
+        
+        alert("About to open WebSocket!");
+        let websocket = new WebSocket("ws://192.168.1.1:43822", "test");
+        websocket.onopen = event => {
+            alert("WebSocket transitioned to open!");
+        }
+        websocket.onerror = event => {
+            alert("WebSocket could not be opened...");
+        }
 
         // Mouse event handlers for panning
         canvas.addEventListener('mousedown', (e) => {
@@ -540,7 +549,7 @@
             ctx.stroke();
         }
 
-        function addPoint() {
+        async function addPoint() {
             const time = parseFloat(document.getElementById('newTime').value);
             const voltage = parseFloat(document.getElementById('newVoltage').value);
 
