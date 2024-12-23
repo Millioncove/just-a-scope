@@ -212,7 +212,7 @@
                 <label>Voltage:</label>
                 <input type="number" id="newVoltage" placeholder="volts">
             </div>
-            <button onclick="addPoint()">Add Point</button>
+            <button onclick="addPointFromFields()">Add Point</button>
         </div>
     </div>
 
@@ -246,8 +246,9 @@
         
         alert("About to open WebSocket!");
         let websocket = new WebSocket("ws://192.168.1.1:43822", "test");
-        websocket.onmessage = event => {
-            alert("Got data! Size: " + event.data.size);
+        websocket.onmessage = async event => {
+            let data = new Float64Array(await event.data.arrayBuffer())
+            addPoint(data[1], data[0]);
         }
 
         // Mouse event handlers for panning
@@ -546,17 +547,21 @@
             ctx.stroke();
         }
 
-        async function addPoint() {
+        function addPointFromFields() {
             const time = parseFloat(document.getElementById('newTime').value);
             const voltage = parseFloat(document.getElementById('newVoltage').value);
 
+            addPoint(time, voltage);
+
+            document.getElementById('newTime').value = '';
+            document.getElementById('newVoltage').value = '';
+        }
+
+        function addPoint (time, voltage) {
             if (!isNaN(time) && !isNaN(voltage)) {
                 data.push({ time, voltage });
                 data.sort((a, b) => a.time - b.time);
                 drawData();
-
-                document.getElementById('newTime').value = '';
-                document.getElementById('newVoltage').value = '';
             }
         }
 

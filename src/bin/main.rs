@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use core::{ fmt::Debug, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, ptr::slice_from_raw_parts};
+use core::{ fmt::Debug, net::{Ipv4Addr, SocketAddr, SocketAddrV4}};
 use alloc::boxed::Box;
 
 use edge_nal::{TcpAccept, TcpBind};
@@ -11,35 +11,36 @@ use embedded_io_async::{Read, Write};
 use embassy_net::{Config, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
-use esp_hal::{prelude::*, gpio::{Level,Output}, peripherals::Peripherals, rng::Rng, timer::timg::TimerGroup};
+use esp_hal::{gpio::{Level,Output}, peripherals::Peripherals, prelude::*, rng::Rng, time::now, timer::timg::TimerGroup};
 use esp_println::println;
 use esp_wifi::wifi::{WifiApDevice, WifiDevice};
 use esp_wifi::{self, wifi::{Configuration,AccessPointConfiguration}};
 use edge_http::{io::{server::{self as http, Handler}, Error}, Method};
-use edge_nal_embassy::TcpBuffers;
+use edge_nal_embassy::{TcpBuffers, TcpError};
 use embedded_websocket::{self as ws};
-use websocket_frame::BareWebSocketFrame;
+use websocket_logistics::{send_message, OscilliscopePoint};
 use zerocopy::IntoBytes;
 
-mod websocket_frame {
+mod websocket_logistics {
+    use embedded_io_async::{ErrorType, Write};
+    use zerocopy::{FromBytes, Immutable, IntoBytes};
 
-    #[derive(Clone, Copy, zerocopy::IntoBytes, zerocopy::FromBytes)]
+    #[derive(IntoBytes, FromBytes, Immutable)]
     #[repr(C)]
-    pub struct BareWebSocketFrame<const L: usize> {
-        fin_rsv_opcode: u8,
-        mask_and_length: u8,
-        pub payload: [u8; L]
+    pub struct OscilliscopePoint {
+        pub voltage: f64,
+        pub second: f64
     }
-    
-    impl<const L: usize> BareWebSocketFrame<L> {
-        pub const fn new() -> BareWebSocketFrame<L> {
-            let fin: u8 =       0b10000000;
-            let opcode: u8 =    0x2; // Binary data.
 
-            let fin_rsv_opcode = fin | opcode;
+    pub async fn send_message<W>(to: &mut W, data: &[u8]) -> Result<(), <W as ErrorType>::Error> 
+        where W: Write
+    {
+        let fin_rsv_opcode = 0b10000010u8; // FIN and binary data.
+        let payload_length = data.len() as u8;
+        if payload_length > 126 {panic!("Max payload length for a simple WebSocket message is 126 bytes.")}
+        let header = [fin_rsv_opcode, payload_length];
 
-            BareWebSocketFrame { fin_rsv_opcode, mask_and_length: (L % 128usize) as u8, payload: [0u8; L] }
-        }
+        to.write_all(&[&header, data].concat()).await
     }
 }
 
@@ -140,19 +141,30 @@ async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) 
             &ws_context.sec_websocket_key, ws_context.sec_websocket_protocol_list.first(),
             &mut handshake_approval
         ).expect("Creating WebSocket handshake response failed.");
-        web_socket.write_all(&handshake_approval[..len])
-        .await.expect("Could not write the WebSocket handshake response to the socket.");
+        web_socket.write_all(&handshake_approval[..len]).await.
+            expect("Could not write the WebSocket handshake response to the socket.");
         //web_socket.flush().await.expect("Flushing the WebSocket failed.");
         
         println!("WebSocket connection should be successfully opened on {}.", endpoint);
 
-        // Send data to the WebSocket.
-        let mut ws_frame = websocket_frame::BareWebSocketFrame::<10>::new();
-        ws_frame.payload = b"ABCDEFGHIJ".clone();
-        let ws_frame_bytes = ws_frame.as_mut_bytes();
-        web_socket.write_all(ws_frame_bytes)
-            .await.expect("Could not write more data after establishing connection.");
-        web_socket.flush().await.expect("Flushing the WebSocket failed.");
+        loop {
+            // Send data to the WebSocket.
+            let point = OscilliscopePoint {
+                voltage: (now().ticks() as f64 / 1_000_000f64) % 5f64,
+                second: (now().duration_since_epoch().to_micros() as f64) * 0.000001f64
+            };
+            
+            match send_message(&mut web_socket, point.as_bytes()).await {
+                Ok(_) => (),
+                Err(TcpError::General(embassy_net::tcp::Error::ConnectionReset)) => {
+                    println!("WebSocket connection was closed.");
+                    break;
+                },
+                Err(e) => panic!("Sending WebSocket message failed: {e:?}")
+            }
+
+            Timer::after(Duration::from_millis(100)).await;
+        }
     }
 }
 
