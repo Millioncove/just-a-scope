@@ -13,11 +13,12 @@ use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{gpio::{Level,Output}, peripherals::Peripherals, prelude::*, rng::Rng, time::now, timer::timg::TimerGroup};
 use esp_println::println;
-use esp_wifi::wifi::{WifiApDevice, WifiDevice};
+use esp_wifi::wifi::{AuthMethod, ClientConfiguration, WifiApDevice, WifiDevice, WifiStaDevice};
 use esp_wifi::{self, wifi::{Configuration,AccessPointConfiguration}};
 use edge_http::{io::{server::{self as http, Handler}, Error}, Method};
 use edge_nal_embassy::{TcpBuffers, TcpError};
 use embedded_websocket::{self as ws};
+use heapless::String;
 use websocket_logistics::{send_message, OscilliscopePoint};
 use zerocopy::IntoBytes;
 
@@ -45,13 +46,21 @@ mod websocket_logistics {
 }
 
 const CONNECTION_TIMEOUT_MS: u32 = 30_000;
-const GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
 const WEBSOCKET_PORT: u16 = 43822;
-const WEBSOCKET_ENDPOINT: SocketAddrV4 = SocketAddrV4::new(GATEWAY_ADDRESS, WEBSOCKET_PORT);
+const AP_GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
+const AP_WEBSOCKET_ENDPOINT: SocketAddrV4 = SocketAddrV4::new(AP_GATEWAY_ADDRESS, WEBSOCKET_PORT);
+const STA_GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
+const STA_STATIC_IP_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 83);
+const STA_WEBSOCKET_ENDPOINT: SocketAddrV4 = SocketAddrV4::new(STA_STATIC_IP_ADDRESS, WEBSOCKET_PORT);
 
-// Get it? Because it's just running all the time :D
+// Get it?
 #[embassy_executor::task]
-async fn marathon (mut runner: Runner<'static, WifiDevice<'static, WifiApDevice>>) {
+async fn access_point_marathon (mut runner: Runner<'static, WifiDevice<'static, WifiApDevice>>) {
+    runner.run().await
+}
+
+#[embassy_executor::task]
+async fn station_marathon (mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>>) {
     runner.run().await
 }
 
@@ -86,7 +95,7 @@ impl Handler for MyHttpHandler {
     
 }
 
-#[embassy_executor::task]
+#[embassy_executor::task(pool_size = 2)]
 async fn http_server (stack: Stack<'static>, ip: Ipv4Addr) {
     let mut server = http::DefaultServer::new();
 
@@ -98,7 +107,7 @@ async fn http_server (stack: Stack<'static>, ip: Ipv4Addr) {
     server.run(Some(CONNECTION_TIMEOUT_MS), http_socket, MyHttpHandler).await.expect("Actually running the http server failed.");
 }
 
-#[embassy_executor::task]
+#[embassy_executor::task(pool_size = 2)]
 async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) {
     'single_web_socket: loop {
         // Set up the underlying TCP socket and listen for a WebSocket handshake request.
@@ -124,6 +133,8 @@ async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) 
             if &header_buffer[bytes_read-4..bytes_read] == b"\r\n\r\n" {
                 // Data is definitely a http message at least. 
                 break;
+            } else {
+                println!("Received data, but it was not http (so also not a WebSocket handshake).");
             }
         }
         
@@ -143,8 +154,7 @@ async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) 
         ).expect("Creating WebSocket handshake response failed.");
         web_socket.write_all(&handshake_approval[..len]).await.
             expect("Could not write the WebSocket handshake response to the socket.");
-        //web_socket.flush().await.expect("Flushing the WebSocket failed.");
-        
+
         println!("WebSocket connection should be successfully opened on {}.", endpoint);
 
         loop {
@@ -168,6 +178,23 @@ async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) 
     }
 }
 
+fn station_auth_method() -> AuthMethod {
+    const AUTH_STR: &str = env!("station_auth_method");
+
+    match env!("station_auth_method") {
+        "none" => return AuthMethod::None,
+        "wep" => { return AuthMethod::WEP; }
+        "wpa" => { return AuthMethod::WPA; }
+        "wapipersonal" => { return AuthMethod::WAPIPersonal; }
+        "wpa2enterprise" => { return AuthMethod::WPA2Enterprise; }
+        "wpa2personal" => { return AuthMethod::WPA2Personal; }
+        "wpa2wpa3personal" => { return AuthMethod::WPA2WPA3Personal; }
+        "wpa3personal" => { return AuthMethod::WPA3Personal; }
+        "wpawpa2personal" => { return AuthMethod::WPAWPA2Personal; }
+        _ => panic!("Configuration value for station auth method '{AUTH_STR}' is invalid.")
+    }
+}
+
 #[main]
 async fn main(spawner: embassy_executor::Spawner) -> ! {
     // Initialize heap, logger, and peripherals.
@@ -183,7 +210,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let timg1 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timg1.timer0);
 
-    // Network stack setup.
+    // Set up wifi peripheral.
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let esp_wifi_controller: Box<esp_wifi::EspWifiController<'static>> = Box::new(esp_wifi::init(
         timg0.timer0, 
@@ -191,50 +218,96 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         peripherals.RADIO_CLK
     ).unwrap());
     let esp_wifi_controller = Box::leak(esp_wifi_controller);
-    let (device, mut controller) = esp_wifi::wifi::new_with_mode(esp_wifi_controller, peripherals.WIFI, WifiApDevice).unwrap();
-    let stack_conf = Config::ipv4_static(StaticConfigV4 {
-        address: Ipv4Cidr::new(Ipv4Addr::new(192, 168, 1, 1), 24),
-        gateway: Some(Ipv4Addr::new(192, 168, 1, 1)),
+    
+    let (ap_device, sta_device, mut controller) = 
+    esp_wifi::wifi::new_ap_sta(esp_wifi_controller, peripherals.WIFI).unwrap();
+    //esp_wifi::wifi::new_with_mode(esp_wifi_controller, peripherals.WIFI, WifiApDevice).unwrap();
+
+    // Station stack setup.
+    let sta_stack_conf = Config::ipv4_static(StaticConfigV4 {
+        address: Ipv4Cidr::new(STA_STATIC_IP_ADDRESS, 24),
+        gateway: Some(STA_GATEWAY_ADDRESS),
         dns_servers: Default::default()
     });
-    let boxed_resources = Box::new(StackResources::<16>::new());
-    let leaked_resources = Box::leak(boxed_resources);
-    let random_seed = 687486766; // Extremely secure!
-    let (stack, runner) = embassy_net::new(device, stack_conf, leaked_resources, random_seed);
+    let sta_resources = Box::leak(Box::new(StackResources::<16>::new()));
+    let random_seed = 35181354; // Extremely secure!
+    let (sta_stack, sta_runner) = embassy_net::new(sta_device, sta_stack_conf, sta_resources, random_seed);
 
-    // Access point configuration and startup.
+    // Access point network stack setup.
+    let ap_stack_conf = Config::ipv4_static(StaticConfigV4 {
+        address: Ipv4Cidr::new(AP_GATEWAY_ADDRESS, 24),
+        gateway: Some(AP_GATEWAY_ADDRESS),
+        dns_servers: Default::default()
+    });
+    let ap_resources = Box::leak(Box::new(StackResources::<16>::new()));
+    let random_seed = 687486766; // Extremely secure!
+    let (ap_stack, ap_runner) = embassy_net::new(ap_device, ap_stack_conf, ap_resources, random_seed);
+
+    // Station configuration.
+    let sta_conf: ClientConfiguration = ClientConfiguration { 
+        ssid: String::<32>::try_from(env!("station_ssid")).expect("Station ssid has wrong format."),
+        auth_method: station_auth_method(), 
+        password: String::<64>::try_from(env!("station_password")).expect("Station password has wrong format."),
+        ..ClientConfiguration::default()
+    };
+
+    // Access point configuration.
     let ap_conf: AccessPointConfiguration = AccessPointConfiguration {
-        ssid: heapless::String::<32>::try_from("jultomten").unwrap(),
+        ssid: String::<32>::try_from("jultomten").unwrap(),
         auth_method: esp_wifi::wifi::AuthMethod::WPA,
-        password: heapless::String::<64>::try_from("skorsten").unwrap(),
+        password: String::<64>::try_from("skorsten").unwrap(),
         ..AccessPointConfiguration::default()
     };
-    println!("Starting the wifi access point!");
-    controller.set_configuration(&Configuration::AccessPoint(ap_conf)).expect("Failed to set the wifi configuration...");
+    println!("Starting the wifi access point, and trying to connect to '{}'", sta_conf.ssid);
+    controller.set_configuration(&Configuration::Mixed(sta_conf, ap_conf)).expect("Failed to set the wifi configurations...");
     controller.start().expect("Welp, could not start the wifi controller...");
 
-    // Start running the stack concurrently.
-    spawner.spawn(marathon(runner)).expect("Could not start stack runner task.");
+    // Start running the stacks concurrently.
+    spawner.spawn(access_point_marathon(ap_runner)).expect("Could not start access point stack runner task.");
+    spawner.spawn(station_marathon(sta_runner)).expect("Could not start station stack runner task.");
 
     // Block until the stack is ready.
     loop {
-        if stack.is_link_up() {
+        if ap_stack.is_link_up() {
             break;
         }
         embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
     }
 
     // Start the servers!
-    println!("Starting http server!");
-    spawner.spawn(http_server(stack, GATEWAY_ADDRESS)).expect("Failed to spawn http server task.");
-    println!("Starting WebSocket server!");
-    spawner.spawn(web_socket_server(stack, SocketAddr::V4(WEBSOCKET_ENDPOINT))).expect("Failed to spawn http server task.");
+    println!("Starting http servers!");
+    spawner.spawn(http_server(ap_stack, AP_GATEWAY_ADDRESS)).expect("Failed to spawn access point http server task.");
+    spawner.spawn(http_server(sta_stack, STA_STATIC_IP_ADDRESS)).expect("Failed to spawn station http server task.");
+    println!("Starting WebSocket servers!");
+    spawner.spawn(web_socket_server(ap_stack, SocketAddr::V4(AP_WEBSOCKET_ENDPOINT))).expect("Failed to spawn access point WebSocket server task.");
+    spawner.spawn(web_socket_server(sta_stack, SocketAddr::V4(STA_WEBSOCKET_ENDPOINT))).expect("Failed to spawn station WebSocket server task.");
 
     // Blinky.
     let mut led: Output = Output::new(peripherals.GPIO21, Level::Low);
     println!("The setup didn't crash! Starting blink loop...");
+    let mut mac =  [0u8; 6];
+    esp_wifi::wifi::sta_mac(&mut mac);
+    println!("My wifi MAC is {:x?}", mac);
     loop {
-        Timer::after(Duration::from_millis(3000)).await;
+        // let scan = controller.scan_n::<15>().unwrap();
+        // println!("I can find {} available access points.", scan.1);
+        // for ap_info in scan.0 {
+        //     println!(" - {}", ap_info.ssid);
+        // }
+
+        if !controller.is_connected().unwrap() {
+            match controller.connect() {
+                Ok(_) => {
+                    match controller.is_connected() {
+                        Ok(true) => println!("Connection to access point network established!"),
+                        Ok(false) => println!("Unexpected error while trying to connect to access point."),
+                    Err(_) => println!("Failed to connect to access point."),
+                    }
+                },
+                Err(e) => println!("Failed when trying to connect: '{e:?}'")
+            }
+        }
+        Timer::after(Duration::from_millis(7000)).await;
         led.toggle();
     }
 }

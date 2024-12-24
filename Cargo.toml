@@ -30,6 +30,10 @@ embedded-websocket = { version = "0.9.4", default-features = false }
 httparse = {version = "1.9.5", default-features = false }
 zerocopy = {version = "0.8.13", features = ["derive"]}
 
+[build-dependencies]
+toml = "0.8.19"
+serde = "1.0.216"
+
 [profile.dev.package.esp-wifi]
 opt-level = 3
 
