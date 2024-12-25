@@ -11,7 +11,9 @@
             ],
             "label": "rust: cargo run",
             "args": [
-                "--release"
+                "--release",
+                "--bin",
+                "main"
             ]
         }
     ]
