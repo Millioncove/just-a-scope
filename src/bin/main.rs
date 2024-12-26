@@ -7,7 +7,9 @@ use alloc::boxed::Box;
 use core::{
     fmt::Debug,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    ptr::addr_of_mut,
 };
+use measure::{CyclicBuffer, CyclicReader};
 
 use edge_http::{
     io::{
@@ -24,8 +26,10 @@ use embedded_io_async::{Read, Write};
 use embedded_websocket::{self as ws};
 use esp_backtrace as _;
 use esp_hal::{
+    analog::adc::{Adc, AdcConfig},
+    cpu_control::CpuControl,
     gpio::{Level, Output},
-    peripherals::Peripherals,
+    peripherals::{self, Peripherals},
     prelude::*,
     rng::Rng,
     time::now,
@@ -41,8 +45,10 @@ use heapless::String;
 use websocket_logistics::{send_message, OscilliscopePoint};
 use zerocopy::IntoBytes;
 
+mod measure;
 mod websocket_logistics;
 
+const POINTS_BUFFER_SIZE: usize = 128;
 const CONNECTION_TIMEOUT_MS: u32 = 30_000;
 const WEBSOCKET_PORT: u16 = 43822;
 const AP_GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
@@ -51,6 +57,9 @@ const STA_GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
 const STA_STATIC_IP_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 83);
 const STA_WEBSOCKET_ENDPOINT: SocketAddrV4 =
     SocketAddrV4::new(STA_STATIC_IP_ADDRESS, WEBSOCKET_PORT);
+
+static mut APP_CORE_STACK: esp_hal::cpu_control::Stack<512> =
+    esp_hal::cpu_control::Stack::<512>::new();
 
 // Get it?
 #[embassy_executor::task]
@@ -115,7 +124,11 @@ async fn http_server(stack: Stack<'static>, ip: Ipv4Addr) {
 }
 
 #[embassy_executor::task(pool_size = 2)]
-async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) {
+async fn web_socket_server(
+    stack: Stack<'static>,
+    point_buffer: &'static CyclicBuffer<POINTS_BUFFER_SIZE, OscilliscopePoint>,
+    address_and_port: SocketAddr,
+) {
     'single_web_socket: loop {
         // Set up the underlying TCP socket and listen for a WebSocket handshake request.
         let buffers: TcpBuffers<2, 500, 500> = TcpBuffers::new();
@@ -176,26 +189,31 @@ async fn web_socket_server(stack: Stack<'static>, address_and_port: SocketAddr) 
             .expect("Could not write the WebSocket handshake response to the socket.");
 
         println!(
-            "WebSocket connection should be successfully opened on {}.",
+            "WebSocket connection should be successfully opened on {}. Taking ownership of buffer reader...",
             endpoint
         );
 
+        let mut reader = match point_buffer.take_reader() {
+            Some(r) => r,
+            None => {
+                println!("Reader was already taken.");
+                continue 'single_web_socket;
+            }
+        };
+
         loop {
             // Send data to the WebSocket.
-            let point = OscilliscopePoint {
-                voltage: (now().ticks() as f64 / 1_000_000f64) % 5f64,
-                second: (now().duration_since_epoch().to_micros() as f64) * 0.000001f64,
-            };
-
-            match send_message(&mut web_socket, point.as_bytes()).await {
-                Ok(_) => (),
-                Err(TcpError::General(embassy_net::tcp::Error::ConnectionReset)) => {
-                    println!("WebSocket connection was closed.");
-                    break;
+            while let Some(point) = reader.next() {
+                match send_message(&mut web_socket, point.as_bytes()).await {
+                    Ok(_) => (),
+                    Err(TcpError::General(embassy_net::tcp::Error::ConnectionReset)) => {
+                        println!("WebSocket connection was closed.");
+                        break;
+                    }
+                    Err(e) => panic!("Sending WebSocket message failed: {e:?}"),
                 }
-                Err(e) => panic!("Sending WebSocket message failed: {e:?}"),
             }
-
+            // Some delay in between WebSocket packets. May be removed in the future.
             Timer::after(Duration::from_millis(100)).await;
         }
     }
@@ -244,6 +262,15 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         config.cpu_clock = CpuClock::max();
         config
     });
+
+    // Construct the buffer that will store the voltage measurements.
+    let point_buffer: &'static CyclicBuffer<POINTS_BUFFER_SIZE, OscilliscopePoint> =
+        Box::leak(Box::new(CyclicBuffer::new(OscilliscopePoint {
+            voltage: 10f64,
+            second: 10f64,
+        })));
+
+    let mut writer = point_buffer.take_writer().unwrap();
 
     // Initialize embassy so async works at all.
     let timg1 = TimerGroup::new(peripherals.TIMG1);
@@ -345,15 +372,30 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     spawner
         .spawn(web_socket_server(
             ap_stack,
+            &point_buffer,
             SocketAddr::V4(AP_WEBSOCKET_ENDPOINT),
         ))
         .expect("Failed to spawn access point WebSocket server task.");
     spawner
         .spawn(web_socket_server(
             sta_stack,
+            &point_buffer,
             SocketAddr::V4(STA_WEBSOCKET_ENDPOINT),
         ))
         .expect("Failed to spawn station WebSocket server task.");
+
+    // Spawn the process on the second core that actually performs the measurements.
+    let mut cpu_control = CpuControl::new(peripherals.CPU_CTRL);
+    let snd_core_fn = || {
+        measure::measuring_task(
+            Adc::new(peripherals.ADC1, AdcConfig::default()),
+            &mut writer,
+        )
+    };
+
+    let _guard = cpu_control
+        .start_app_core(unsafe { &mut *addr_of_mut!(APP_CORE_STACK) }, snd_core_fn)
+        .unwrap();
 
     // Blinky.
     let mut led: Output = Output::new(peripherals.GPIO21, Level::Low);

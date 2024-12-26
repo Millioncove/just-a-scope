@@ -1,7 +1,7 @@
 use embedded_io_async::{ErrorType, Write};
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
-#[derive(IntoBytes, FromBytes, Immutable)]
+#[derive(IntoBytes, FromBytes, Immutable, Clone, Copy, Debug)]
 #[repr(C)]
 pub struct OscilliscopePoint {
     pub voltage: f64,
