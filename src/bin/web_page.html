@@ -243,12 +243,14 @@
         let scaleStartX = 0;
         let startVoltsPerDiv = 0;
         let startTimePerDiv = 0;
-        
+
         alert("About to open WebSocket!");
         let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
         websocket.onmessage = async event => {
             let data = new Float64Array(await event.data.arrayBuffer())
-            addPoint(data[1], data[0]);
+            for (let i = 0; i < data.length; i += 2) {
+                addPoint(data[i + 1], data[i]);
+            }
         }
 
         // Mouse event handlers for panning
@@ -557,7 +559,7 @@
             document.getElementById('newVoltage').value = '';
         }
 
-        function addPoint (time, voltage) {
+        function addPoint(time, voltage) {
             if (!isNaN(time) && !isNaN(voltage)) {
                 data.push({ time, voltage });
                 data.sort((a, b) => a.time - b.time);

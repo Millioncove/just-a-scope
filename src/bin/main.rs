@@ -9,7 +9,7 @@ use core::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     ptr::addr_of_mut,
 };
-use measure::{CyclicBuffer, CyclicReader};
+use measure::CyclicBuffer;
 
 use edge_http::{
     io::{
@@ -29,10 +29,9 @@ use esp_hal::{
     analog::adc::{Adc, AdcConfig},
     cpu_control::CpuControl,
     gpio::{Level, Output},
-    peripherals::{self, Peripherals},
+    peripherals::Peripherals,
     prelude::*,
     rng::Rng,
-    time::now,
     timer::timg::TimerGroup,
 };
 use esp_println::println;
@@ -43,14 +42,19 @@ use esp_wifi::{
 };
 use heapless::String;
 use websocket_logistics::{send_message, OscilliscopePoint};
-use zerocopy::IntoBytes;
 
 mod measure;
 mod websocket_logistics;
 
-const POINTS_BUFFER_SIZE: usize = 128;
+const POINTS_BUFFER_SIZE: usize = 64;
+const SOCKETS_PER_STACK: usize = 16;
+const TCP_SOCKETS_PER_WEBSOCKET: usize = 8;
+const WEBSOCKET_SOCKET_BUFFERS_SIZE: usize = 500; // Probably too small...
+const TCP_SOCKETS_PER_HTTP_SERVER: usize = 8;
+const HTTP_SOCKET_BUFFERS_SIZE: usize = 500;
 const CONNECTION_TIMEOUT_MS: u32 = 30_000;
 const WEBSOCKET_PORT: u16 = 43822;
+const HTTP_SERVER_PORT: u16 = 80;
 const AP_GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
 const AP_WEBSOCKET_ENDPOINT: SocketAddrV4 = SocketAddrV4::new(AP_GATEWAY_ADDRESS, WEBSOCKET_PORT);
 const STA_GATEWAY_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);
@@ -109,11 +113,22 @@ impl Handler for MyHttpHandler {
 async fn http_server(stack: Stack<'static>, ip: Ipv4Addr) {
     let mut server = http::DefaultServer::new();
 
-    let buffers: TcpBuffers<8, 500, 500> = TcpBuffers::new();
-    let tcp_instance: edge_nal_embassy::Tcp<'_, 8, 500, 500> =
-        edge_nal_embassy::Tcp::new(stack, &buffers);
+    let buffers: TcpBuffers<
+        TCP_SOCKETS_PER_HTTP_SERVER,
+        HTTP_SOCKET_BUFFERS_SIZE,
+        HTTP_SOCKET_BUFFERS_SIZE,
+    > = TcpBuffers::new();
+    let tcp_instance: edge_nal_embassy::Tcp<
+        '_,
+        TCP_SOCKETS_PER_HTTP_SERVER,
+        HTTP_SOCKET_BUFFERS_SIZE,
+        HTTP_SOCKET_BUFFERS_SIZE,
+    > = edge_nal_embassy::Tcp::new(stack, &buffers);
     let http_socket = tcp_instance
-        .bind(core::net::SocketAddr::V4(SocketAddrV4::new(ip, 80)))
+        .bind(core::net::SocketAddr::V4(SocketAddrV4::new(
+            ip,
+            HTTP_SERVER_PORT,
+        )))
         .await
         .expect("Failed to bind http socket.");
 
@@ -131,9 +146,17 @@ async fn web_socket_server(
 ) {
     'single_web_socket: loop {
         // Set up the underlying TCP socket and listen for a WebSocket handshake request.
-        let buffers: TcpBuffers<2, 500, 500> = TcpBuffers::new();
-        let tcp_instance: edge_nal_embassy::Tcp<'_, 2, 500, 500> =
-            edge_nal_embassy::Tcp::new(stack, &buffers);
+        let buffers: TcpBuffers<
+            TCP_SOCKETS_PER_WEBSOCKET,
+            WEBSOCKET_SOCKET_BUFFERS_SIZE,
+            WEBSOCKET_SOCKET_BUFFERS_SIZE,
+        > = TcpBuffers::new();
+        let tcp_instance: edge_nal_embassy::Tcp<
+            '_,
+            TCP_SOCKETS_PER_WEBSOCKET,
+            WEBSOCKET_SOCKET_BUFFERS_SIZE,
+            WEBSOCKET_SOCKET_BUFFERS_SIZE,
+        > = edge_nal_embassy::Tcp::new(stack, &buffers);
         let web_socket = tcp_instance
             .bind(address_and_port)
             .await
@@ -144,7 +167,7 @@ async fn web_socket_server(
             .expect("Something went wrong when expecting a connection to the websocket.");
 
         // Something connected. Make sure it sent a http message. (WebSocket handshakes are http messages)
-        let mut header_buffer = [0u8; 500];
+        let mut header_buffer = [0u8; WEBSOCKET_SOCKET_BUFFERS_SIZE];
         let mut bytes_read: usize = 0;
         loop {
             match web_socket.read(&mut header_buffer).await {
@@ -175,7 +198,7 @@ async fn web_socket_server(
 
         // At this point we have a definite handshake request. Send a handshake approval response.
         let mut ws_server = ws::WebSocketServer::new_server();
-        let mut handshake_approval = [0u8; 500];
+        let mut handshake_approval = [0u8; WEBSOCKET_SOCKET_BUFFERS_SIZE];
         let len = ws_server
             .server_accept(
                 &ws_context.sec_websocket_key,
@@ -193,7 +216,7 @@ async fn web_socket_server(
             endpoint
         );
 
-        let mut reader = match point_buffer.take_reader() {
+        let reader = match point_buffer.take_reader() {
             Some(r) => r,
             None => {
                 println!("Reader was already taken.");
@@ -203,18 +226,26 @@ async fn web_socket_server(
 
         loop {
             // Send data to the WebSocket.
-            while let Some(point) = reader.next() {
-                match send_message(&mut web_socket, point.as_bytes()).await {
+            let batches = &reader.get_batch_holder().batches;
+
+            for batch in batches {
+                assert!(
+                    batch.len() % 8 == 0,
+                    "Trying to send data with length not a multiple of 8"
+                );
+
+                match send_message(&mut web_socket, batch).await {
                     Ok(_) => (),
                     Err(TcpError::General(embassy_net::tcp::Error::ConnectionReset)) => {
                         println!("WebSocket connection was closed.");
-                        break;
+                        continue 'single_web_socket;
                     }
                     Err(e) => panic!("Sending WebSocket message failed: {e:?}"),
                 }
             }
+
             // Some delay in between WebSocket packets. May be removed in the future.
-            Timer::after(Duration::from_millis(100)).await;
+            //Timer::after(Duration::from_millis(10)).await;
         }
     }
 }
@@ -297,7 +328,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         gateway: Some(STA_GATEWAY_ADDRESS),
         dns_servers: Default::default(),
     });
-    let sta_resources = Box::leak(Box::new(StackResources::<16>::new()));
+    let sta_resources = Box::leak(Box::new(StackResources::<SOCKETS_PER_STACK>::new()));
     let random_seed = 35181354; // Extremely secure!
     let (sta_stack, sta_runner) =
         embassy_net::new(sta_device, sta_stack_conf, sta_resources, random_seed);
@@ -308,7 +339,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         gateway: Some(AP_GATEWAY_ADDRESS),
         dns_servers: Default::default(),
     });
-    let ap_resources = Box::leak(Box::new(StackResources::<16>::new()));
+    let ap_resources = Box::leak(Box::new(StackResources::<SOCKETS_PER_STACK>::new()));
     let random_seed = 687486766; // Extremely secure!
     let (ap_stack, ap_runner) =
         embassy_net::new(ap_device, ap_stack_conf, ap_resources, random_seed);

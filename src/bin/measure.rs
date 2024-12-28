@@ -5,8 +5,8 @@ use core::{
 
 use alloc::boxed::Box;
 use critical_section::Mutex;
-use esp_hal::{analog::adc::Adc, delay::Delay, i2s::master::RegisterAccess, time::now};
-use esp_println::println;
+use esp_hal::{analog::adc::Adc, delay::Delay, time::now};
+use zerocopy::{Immutable, IntoBytes};
 
 use crate::websocket_logistics::OscilliscopePoint;
 
@@ -16,6 +16,12 @@ pub struct CyclicWriter<'a, const L: usize, T> {
 
 pub struct CyclicReader<'a, const L: usize, T> {
     buffer: &'a CyclicBuffer<L, T>,
+}
+
+pub struct CyclicBatch<'a, const L: usize, T> {
+    buffer: &'a CyclicBuffer<L, T>,
+    pub batches: [&'a [u8]; 2],
+    reads_until: usize,
 }
 
 pub struct CyclicBuffer<const L: usize, T> {
@@ -107,7 +113,8 @@ impl<'a, const L: usize, T> CyclicWriter<'a, L, T> {
     }
 }
 
-impl<const L: usize, T> Iterator for CyclicReader<'_, L, T>
+// Original reading functionality of CyclicBuffer. Too much copying of single elements.
+/*impl<const L: usize, T> Iterator for CyclicReader<'_, L, T>
 where
     T: Copy,
 {
@@ -125,6 +132,46 @@ where
                 *read_index = (*read_index + 1) % L;
             }
             return Some(item);
+        }
+    }
+}*/
+
+impl<'a, const L: usize, T: IntoBytes + Immutable> CyclicReader<'a, L, T> {
+    pub fn get_batch_holder(&self) -> CyclicBatch<'a, L, T> {
+        let read_index: usize;
+        let write_index: usize;
+        let entries_array: *mut [T; L] = self.buffer.entries.get() as *mut [T; L];
+        unsafe {
+            read_index = *self.buffer.read_index.get();
+            write_index = *self.buffer.write_index.get();
+
+            if read_index <= write_index {
+                return CyclicBatch {
+                    buffer: &self.buffer,
+                    batches: [
+                        &((*entries_array)[read_index..write_index]).as_bytes(),
+                        &((*entries_array)[0..0]).as_bytes(),
+                    ],
+                    reads_until: write_index,
+                };
+            } else {
+                return CyclicBatch {
+                    buffer: &self.buffer,
+                    batches: [
+                        &((*entries_array)[read_index..]).as_bytes(),
+                        &((*entries_array)[..write_index]).as_bytes(),
+                    ],
+                    reads_until: write_index,
+                };
+            }
+        }
+    }
+}
+
+impl<'a, const L: usize, T> Drop for CyclicBatch<'a, L, T> {
+    fn drop(&mut self) {
+        unsafe {
+            *self.buffer.read_index.get() = self.reads_until;
         }
     }
 }
@@ -145,6 +192,6 @@ pub fn measuring_task<const L: usize, ADCI>(
             Ok(_) => (),
             Err(_) => (),
         }
-        delay.delay_millis(10);
+        delay.delay_micros(10);
     }
 }
