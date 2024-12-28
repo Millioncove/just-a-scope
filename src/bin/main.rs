@@ -10,8 +10,6 @@ use core::{
     ptr::addr_of_mut,
 };
 
-use zerocopy::{FromBytes, Immutable, IntoBytes};
-
 use edge_http::{
     io::{
         server::{self as http, Handler},
@@ -42,7 +40,7 @@ use esp_wifi::{
     wifi::{AccessPointConfiguration, Configuration},
 };
 use heapless::String;
-use websocket_logistics::{send_message, CyclicBatch, CyclicBuffer, OscilliscopePoint};
+use websocket_logistics::{send_message, CyclicBuffer, OscilliscopePoint};
 
 mod measure;
 mod websocket_logistics;
@@ -441,7 +439,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
                 Ok(_) => match controller.is_connected() {
                     Ok(true) => println!("Connection to access point network established!"),
                     Ok(false) => {
-                        println!("Unexpected error while trying to connect to access point.")
+                        println!("Connection to access point may have succeeded..?")
                     }
                     Err(_) => println!("Failed to connect to access point."),
                 },

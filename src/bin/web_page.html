@@ -229,7 +229,7 @@
         let centerX = 0;
         let centerY = 0;
         let voltsPerDiv = 2;
-        let timePerDiv = 0.5;
+        let timePerDiv = 30;
         let lastPinchDistance = null;
         const DIVISIONS_X = 10;
         const DIVISIONS_Y = 8;
@@ -243,8 +243,9 @@
         let scaleStartX = 0;
         let startVoltsPerDiv = 0;
         let startTimePerDiv = 0;
+        let TOLERANCE_FACTOR = 0.8;
+        let DRAW_POINTS = true;
 
-        alert("About to open WebSocket!");
         let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
         websocket.onmessage = async event => {
             let data = new Float64Array(await event.data.arrayBuffer())
@@ -252,6 +253,7 @@
                 addPoint(data[i + 1], data[i]);
             }
         }
+        setInterval(drawData, 100)
 
         // Mouse event handlers for panning
         canvas.addEventListener('mousedown', (e) => {
@@ -385,14 +387,6 @@
 
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
-
-        // Initialize with sample data
-        for (let t = 0; t < 4; t += 0.1) {
-            data.push({
-                time: t,
-                voltage: 5 * Math.sin(2 * Math.PI * t)
-            });
-        }
 
         // Toggle controls visibility
         toggleButton.addEventListener('click', () => {
@@ -543,6 +537,7 @@
                     ctx.moveTo(x, y);
                 } else {
                     ctx.lineTo(x, y);
+                    if (DRAW_POINTS) { ctx.arc(x, y, 2, 0, 2 * Math.PI); }
                 }
             });
 
@@ -553,16 +548,58 @@
             const time = parseFloat(document.getElementById('newTime').value);
             const voltage = parseFloat(document.getElementById('newVoltage').value);
 
-            addPoint(time, voltage);
+            addPointAndDraw(time, voltage);
 
             document.getElementById('newTime').value = '';
             document.getElementById('newVoltage').value = '';
         }
 
+        /*function isMiddlePointRemovable(left, middle, right) {
+            let average_timestamp = (left.time + right.time) / 2;
+            let average_voltage = (left.voltage + right.voltage) / 2;
+
+            return average_voltage < middle.voltage * (1 + TOLERANCE_FACTOR)
+                && average_voltage > middle.voltage * (1 - TOLERANCE_FACTOR)
+                && average_timestamp < middle.time * (1 + TOLERANCE_FACTOR)
+                && average_timestamp > middle.time * (1 - TOLERANCE_FACTOR);
+        }*/
+
+        function isMiddlePointRemovable(left, middle, right) {
+            let deltaTimeToRight = right.time + left.time;
+            let deltaVoltageToRight = right.voltage - left.voltage;
+            let deltaTimeToMiddle = middle.time + left.time;
+            let deltaVoltageToMiddle = middle.voltage - left.voltage;
+
+            let derivativeToRight = deltaVoltageToRight / deltaTimeToRight;
+            let derivativeToMiddle = deltaVoltageToMiddle / deltaTimeToMiddle;
+
+            return derivativeToRight < derivativeToMiddle * (1 + TOLERANCE_FACTOR)
+                && derivativeToRight > derivativeToMiddle * (1 - TOLERANCE_FACTOR);
+        }
+
         function addPoint(time, voltage) {
+            if (data.length >= 2) {
+                const lastPoint = data.pop();
+                const beforeLastPoint = data.pop();
+                data.push(beforeLastPoint);
+
+                if (!isNaN(time) && !isNaN(voltage)) {
+                    if (isMiddlePointRemovable(beforeLastPoint, lastPoint, { time, voltage })) {
+                        data.push({ time, voltage })
+                    } else {
+                        data.push(lastPoint)
+                        data.push({ time, voltage })
+                    }
+                }
+            } else {
+                data.push({ time, voltage })
+            }
+        }
+
+        function addPointAndDraw(time, voltage) {
             if (!isNaN(time) && !isNaN(voltage)) {
                 data.push({ time, voltage });
-                data.sort((a, b) => a.time - b.time);
+                //data.sort((a, b) => a.time - b.time);
                 drawData();
             }
         }

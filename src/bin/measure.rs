@@ -1,5 +1,5 @@
+use crate::websocket_logistics::{CyclicWriter, OscilliscopePoint};
 use esp_hal::{analog::adc::Adc, delay::Delay, time::now};
-use crate::websocket_logistics::{OscilliscopePoint, CyclicWriter};
 
 pub fn measuring_task<const L: usize, ADCI>(
     _adc: Adc<'_, ADCI>,

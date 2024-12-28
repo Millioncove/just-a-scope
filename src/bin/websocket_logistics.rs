@@ -1,12 +1,11 @@
-use embedded_io_async::{ErrorType, Write};
 use core::{
     cell::{RefCell, UnsafeCell},
     error::Error,
 };
+use embedded_io_async::{ErrorType, Write};
 
 use alloc::boxed::Box;
 use critical_section::Mutex;
-use esp_hal::{time::now};
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 #[derive(IntoBytes, FromBytes, Immutable, Clone, Copy, Debug)]
