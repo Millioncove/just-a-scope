@@ -9,7 +9,8 @@ use core::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     ptr::addr_of_mut,
 };
-use measure::CyclicBuffer;
+
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 use edge_http::{
     io::{
@@ -41,7 +42,7 @@ use esp_wifi::{
     wifi::{AccessPointConfiguration, Configuration},
 };
 use heapless::String;
-use websocket_logistics::{send_message, OscilliscopePoint};
+use websocket_logistics::{send_message, CyclicBatch, CyclicBuffer, OscilliscopePoint};
 
 mod measure;
 mod websocket_logistics;
