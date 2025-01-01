@@ -45,7 +45,7 @@ use websocket_logistics::{send_message, CyclicBuffer, OscilliscopePoint};
 mod measure;
 mod websocket_logistics;
 
-const POINTS_BUFFER_SIZE: usize = 64;
+const POINTS_BUFFER_SIZE: usize = 128;
 const SOCKETS_PER_STACK: usize = 16;
 const TCP_SOCKETS_PER_WEBSOCKET: usize = 8;
 const WEBSOCKET_SOCKET_BUFFERS_SIZE: usize = 500; // Probably too small...
@@ -61,8 +61,8 @@ const STA_STATIC_IP_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 83);
 const STA_WEBSOCKET_ENDPOINT: SocketAddrV4 =
     SocketAddrV4::new(STA_STATIC_IP_ADDRESS, WEBSOCKET_PORT);
 
-static mut APP_CORE_STACK: esp_hal::cpu_control::Stack<512> =
-    esp_hal::cpu_control::Stack::<512>::new();
+static mut APP_CORE_STACK: esp_hal::cpu_control::Stack<640> =
+    esp_hal::cpu_control::Stack::<640>::new();
 
 // Get it?
 #[embassy_executor::task]
@@ -225,21 +225,23 @@ async fn web_socket_server(
 
         loop {
             // Send data to the WebSocket.
-            let batches = &reader.get_batch_holder().batches;
+            let batches = &reader.get_batch_holder(8).batches;
 
             for batch in batches {
-                assert!(
-                    batch.len() % 8 == 0,
-                    "Trying to send data with length not a multiple of 8"
-                );
+                for batch in batch.chunks(112) {
+                    assert!(
+                        batch.len() % 8 == 0,
+                        "Trying to send data with length not a multiple of 8"
+                    );
 
-                match send_message(&mut web_socket, batch).await {
-                    Ok(_) => (),
-                    Err(TcpError::General(embassy_net::tcp::Error::ConnectionReset)) => {
-                        println!("WebSocket connection was closed.");
-                        continue 'single_web_socket;
+                    match send_message(&mut web_socket, batch).await {
+                        Ok(_) => (),
+                        Err(TcpError::General(embassy_net::tcp::Error::ConnectionReset)) => {
+                            println!("WebSocket connection was closed.");
+                            continue 'single_web_socket;
+                        }
+                        Err(e) => panic!("Sending WebSocket message failed: {e:?}"),
                     }
-                    Err(e) => panic!("Sending WebSocket message failed: {e:?}"),
                 }
             }
 
@@ -434,19 +436,26 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     esp_wifi::wifi::sta_mac(&mut mac);
     println!("My wifi MAC is {:x?}", mac);
     loop {
-        if !controller.is_connected().unwrap() {
-            match controller.connect() {
-                Ok(_) => match controller.is_connected() {
-                    Ok(true) => println!("Connection to access point network established!"),
-                    Ok(false) => {
-                        println!("Connection to access point may have succeeded..?")
-                    }
-                    Err(_) => println!("Failed to connect to access point."),
-                },
-                Err(e) => println!("Failed when trying to connect: '{e:?}'"),
-            }
+        unsafe {
+            println!("Missed: {}", *point_buffer.missed.get());
         }
+        try_connect(&mut controller);
         Timer::after(Duration::from_millis(7000)).await;
         led.toggle();
+    }
+}
+
+fn try_connect(controller: &mut esp_wifi::wifi::WifiController) {
+    if !controller.is_connected().unwrap() {
+        match controller.connect() {
+            Ok(_) => match controller.is_connected() {
+                Ok(true) => println!("Connection to access point network established!"),
+                Ok(false) => {
+                    println!("Connection to access point may have succeeded..?")
+                }
+                Err(_) => println!("Failed to connect to access point."),
+            },
+            Err(e) => println!("Failed when trying to connect: '{e:?}'"),
+        }
     }
 }

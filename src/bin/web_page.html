@@ -243,11 +243,13 @@
         let scaleStartX = 0;
         let startVoltsPerDiv = 0;
         let startTimePerDiv = 0;
+        let REMOVE_REDUNDANT_POINTS = false;
         let TOLERANCE_FACTOR = 0.8;
         let DRAW_POINTS = true;
 
         let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
         websocket.onmessage = async event => {
+            console.log(event.data)
             let data = new Float64Array(await event.data.arrayBuffer())
             for (let i = 0; i < data.length; i += 2) {
                 addPoint(data[i + 1], data[i]);
@@ -584,7 +586,7 @@
                 data.push(beforeLastPoint);
 
                 if (!isNaN(time) && !isNaN(voltage)) {
-                    if (isMiddlePointRemovable(beforeLastPoint, lastPoint, { time, voltage })) {
+                    if (REMOVE_REDUNDANT_POINTS && isMiddlePointRemovable(beforeLastPoint, lastPoint, { time, voltage })) {
                         data.push({ time, voltage })
                     } else {
                         data.push(lastPoint)
