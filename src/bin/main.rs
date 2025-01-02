@@ -225,7 +225,7 @@ async fn web_socket_server(
 
         loop {
             // Send data to the WebSocket.
-            let batches = &reader.get_batch_holder(8).batches;
+            let batches = &reader.get_batch_holder().batches;
 
             for batch in batches {
                 for batch in batch.chunks(112) {
@@ -446,16 +446,16 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 }
 
 fn try_connect(controller: &mut esp_wifi::wifi::WifiController) {
-    if !controller.is_connected().unwrap() {
-        match controller.connect() {
+    match controller.is_connected() {
+        Ok(true) => (),
+        Ok(false) => match controller.connect() {
             Ok(_) => match controller.is_connected() {
                 Ok(true) => println!("Connection to access point network established!"),
-                Ok(false) => {
-                    println!("Connection to access point may have succeeded..?")
-                }
+                Ok(false) => println!("Connection to access point is established."),
                 Err(_) => println!("Failed to connect to access point."),
             },
             Err(e) => println!("Failed when trying to connect: '{e:?}'"),
-        }
+        },
+        _ => println!("Failed to check if connected to access point."),
     }
 }

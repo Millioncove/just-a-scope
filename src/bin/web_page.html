@@ -249,13 +249,13 @@
 
         let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
         websocket.onmessage = async event => {
-            console.log(event.data)
             let data = new Float64Array(await event.data.arrayBuffer())
             for (let i = 0; i < data.length; i += 2) {
                 addPoint(data[i + 1], data[i]);
             }
         }
         setInterval(drawData, 100)
+        setInterval(sortData, 2000)
 
         // Mouse event handlers for panning
         canvas.addEventListener('mousedown', (e) => {
@@ -463,6 +463,10 @@
             }
         });
 
+        function sortData() {
+            data.sort((a, b) => a.time - b.time);
+        }
+
         // Rest of the oscilloscope code remains the same as before
         function drawGrid() {
             const gridSizeX = canvas.width / DIVISIONS_X;
@@ -556,16 +560,6 @@
             document.getElementById('newVoltage').value = '';
         }
 
-        /*function isMiddlePointRemovable(left, middle, right) {
-            let average_timestamp = (left.time + right.time) / 2;
-            let average_voltage = (left.voltage + right.voltage) / 2;
-
-            return average_voltage < middle.voltage * (1 + TOLERANCE_FACTOR)
-                && average_voltage > middle.voltage * (1 - TOLERANCE_FACTOR)
-                && average_timestamp < middle.time * (1 + TOLERANCE_FACTOR)
-                && average_timestamp > middle.time * (1 - TOLERANCE_FACTOR);
-        }*/
-
         function isMiddlePointRemovable(left, middle, right) {
             let deltaTimeToRight = right.time + left.time;
             let deltaVoltageToRight = right.voltage - left.voltage;
@@ -601,7 +595,7 @@
         function addPointAndDraw(time, voltage) {
             if (!isNaN(time) && !isNaN(voltage)) {
                 data.push({ time, voltage });
-                //data.sort((a, b) => a.time - b.time);
+                data.sort((a, b) => a.time - b.time);
                 drawData();
             }
         }
