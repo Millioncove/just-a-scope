@@ -64,6 +64,8 @@ const STA_WEBSOCKET_ENDPOINT: SocketAddrV4 =
 static mut APP_CORE_STACK: esp_hal::cpu_control::Stack<640> =
     esp_hal::cpu_control::Stack::<640>::new();
 
+static mut CONNECTED_TO_AP: bool = false;
+
 // Get it?
 #[embassy_executor::task]
 async fn access_point_marathon(mut runner: Runner<'static, WifiDevice<'static, WifiApDevice>>) {
@@ -245,8 +247,11 @@ async fn web_socket_server(
                 }
             }
 
-            // Some delay in between WebSocket packets. May be removed in the future.
-            //Timer::after(Duration::from_millis(10)).await;
+            // Flush the WebSocket. Leads to weird behavior if not done.
+            web_socket
+                .flush()
+                .await
+                .expect("Failed to flush WebSocket.");
         }
     }
 }
@@ -446,12 +451,22 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 }
 
 fn try_connect(controller: &mut esp_wifi::wifi::WifiController) {
+    unsafe {
+        if CONNECTED_TO_AP {
+            return;
+        }
+    }
+
     match controller.is_connected() {
         Ok(true) => (),
         Ok(false) => match controller.connect() {
             Ok(_) => match controller.is_connected() {
-                Ok(true) => println!("Connection to access point network established!"),
-                Ok(false) => println!("Connection to access point is established."),
+                Ok(_) => {
+                    println!("Connection to access point network established!");
+                    unsafe {
+                        CONNECTED_TO_AP = true;
+                    }
+                }
                 Err(_) => println!("Failed to connect to access point."),
             },
             Err(e) => println!("Failed when trying to connect: '{e:?}'"),

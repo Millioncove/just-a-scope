@@ -20,20 +20,23 @@ pub fn measuring_task<const L: usize, ADCI>(
 
     loop {
         let current_second: f64 = now().ticks() as f64 / 1_000_000f64;
-        let voltage: f64 = (current_second * current_second / 120f64) % 16f64;
-        let voltage: f64 = if voltage > 1f64 {
-            voltage * 2.0
-        } else {
-            voltage
-        };
 
         // Dummy sawtooth waveform.
         let new_point = OscilliscopePoint {
-            voltage,
+            voltage: 4f64,
             second: current_second,
         };
 
-        if !is_middle_point_removable_complicated(&before_last, &last, &new_point, 0.001f64, 0.0f64)
+        let time_difference = last.second - before_last.second;
+
+        if time_difference > 1f64
+            || !is_middle_point_removable_complicated(
+                &before_last,
+                &last,
+                &new_point,
+                0.001f64,
+                0.05f64,
+            )
         {
             match point_buffer_writer.append(last.clone()) {
                 Ok(_) => (),
