@@ -1,12 +1,30 @@
 use crate::websocket_logistics::{
     is_middle_point_removable_complicated, CyclicWriter, OscilliscopePoint,
 };
-use esp_hal::{analog::adc::Adc, delay::Delay, time::now};
+use esp_hal::{
+    analog::adc::{Adc, AdcChannel, AdcConfig, Attenuation},
+    delay::Delay,
+    gpio::{AnalogPin, GpioPin},
+    peripherals::ADC1,
+    prelude::nb,
+    time::now,
+};
 
-pub fn measuring_task<const L: usize, ADCI>(
-    _adc: Adc<'_, ADCI>,
+const REFERENCE_VOLTAGE: f64 = 3.34f64;
+
+pub fn measuring_task<const L: usize, const PIN: u8>(
+    adc_peripheral: ADC1,
+    pin: GpioPin<PIN>,
     point_buffer_writer: &mut CyclicWriter<'_, L, OscilliscopePoint>,
-) -> ! {
+) -> !
+where
+    GpioPin<PIN>: AdcChannel + AnalogPin,
+{
+    let mut adc_config = AdcConfig::new();
+
+    let mut pin = adc_config.enable_pin(pin, Attenuation::Attenuation11dB);
+    let mut adc = Adc::new(adc_peripheral, adc_config);
+
     let delay = Delay::new();
 
     let mut before_last: OscilliscopePoint = OscilliscopePoint {
@@ -20,10 +38,10 @@ pub fn measuring_task<const L: usize, ADCI>(
 
     loop {
         let current_second: f64 = now().ticks() as f64 / 1_000_000f64;
-
-        // Dummy sawtooth waveform.
+        let voltage = nb::block!(adc.read_oneshot(&mut pin)).unwrap();
+        let voltage = voltage as f64 * REFERENCE_VOLTAGE / 4095f64;
         let new_point = OscilliscopePoint {
-            voltage: 4f64,
+            voltage,
             second: current_second,
         };
 
@@ -34,8 +52,8 @@ pub fn measuring_task<const L: usize, ADCI>(
                 &before_last,
                 &last,
                 &new_point,
-                0.001f64,
-                0.05f64,
+                0.1f64,
+                0.3f64,
             )
         {
             match point_buffer_writer.append(last.clone()) {

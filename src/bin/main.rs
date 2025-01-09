@@ -25,7 +25,6 @@ use embedded_io_async::{Read, Write};
 use embedded_websocket::{self as ws};
 use esp_backtrace as _;
 use esp_hal::{
-    analog::adc::{Adc, AdcConfig},
     cpu_control::CpuControl,
     gpio::{Level, Output},
     peripherals::Peripherals,
@@ -423,12 +422,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     // Spawn the process on the second core that actually performs the measurements.
     let mut cpu_control = CpuControl::new(peripherals.CPU_CTRL);
-    let snd_core_fn = || {
-        measure::measuring_task(
-            Adc::new(peripherals.ADC1, AdcConfig::default()),
-            &mut writer,
-        )
-    };
+    let snd_core_fn = || measure::measuring_task(peripherals.ADC1, peripherals.GPIO1, &mut writer);
 
     let _guard = cpu_control
         .start_app_core(unsafe { &mut *addr_of_mut!(APP_CORE_STACK) }, snd_core_fn)
