@@ -2,7 +2,7 @@ use crate::websocket_logistics::{
     is_middle_point_removable_complicated, CyclicWriter, OscilliscopePoint,
 };
 use esp_hal::{
-    analog::adc::{Adc, AdcChannel, AdcConfig, Attenuation},
+    analog::adc::{Adc, AdcCalBasic, AdcChannel, AdcConfig, Attenuation},
     delay::Delay,
     gpio::{AnalogPin, GpioPin},
     peripherals::ADC1,
@@ -10,7 +10,7 @@ use esp_hal::{
     time::now,
 };
 
-const REFERENCE_VOLTAGE: f64 = 3.34f64;
+const REFERENCE_VOLTAGE: f64 = 3.1f64;
 
 pub fn measuring_task<const L: usize, const PIN: u8>(
     adc_peripheral: ADC1,
@@ -22,7 +22,8 @@ where
 {
     let mut adc_config = AdcConfig::new();
 
-    let mut pin = adc_config.enable_pin(pin, Attenuation::Attenuation11dB);
+    let mut pin =
+        adc_config.enable_pin_with_cal::<_, AdcCalBasic<_>>(pin, Attenuation::Attenuation11dB);
     let mut adc = Adc::new(adc_peripheral, adc_config);
 
     let delay = Delay::new();
