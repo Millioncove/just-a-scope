@@ -366,7 +366,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         ..AccessPointConfiguration::default()
     };
     println!(
-        "Starting the wifi access point, and trying to connect to '{}'",
+        "Configured to connect to {}. Starting the wifi access point...",
         sta_conf.ssid
     );
 
@@ -434,11 +434,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let mut mac = [0u8; 6];
     esp_wifi::wifi::sta_mac(&mut mac);
     println!("My wifi MAC is {:x?}", mac);
+    try_connect(&mut controller);
     loop {
         unsafe {
             println!("Missed: {}", *point_buffer.missed.get());
         }
-        try_connect(&mut controller);
         Timer::after(Duration::from_millis(7000)).await;
         led.toggle();
     }
@@ -453,18 +453,24 @@ fn try_connect(controller: &mut esp_wifi::wifi::WifiController) {
 
     match controller.is_connected() {
         Ok(true) => (),
-        Ok(false) => match controller.connect() {
-            Ok(_) => match controller.is_connected() {
-                Ok(_) => {
-                    println!("Connection to access point network established!");
-                    unsafe {
-                        CONNECTED_TO_AP = true;
+        Ok(false) | Err(esp_wifi::wifi::WifiError::Disconnected) => {
+            println!("Trying to connect to access point as station...");
+            match controller.connect() {
+                Ok(_) => match controller.is_connected() {
+                    Ok(true) => {
+                        println!("Connection to access point network established!");
+                        unsafe {
+                            CONNECTED_TO_AP = true;
+                        }
                     }
-                }
-                Err(_) => println!("Failed to connect to access point."),
-            },
-            Err(e) => println!("Failed when trying to connect: '{e:?}'"),
-        },
+                    Ok(false) => {
+                        println!("Connection to access point may have succeeded or failed (???)")
+                    }
+                    Err(e) => println!("Failed to connect to access point: {e:?}"),
+                },
+                Err(e) => println!("Failed when trying to connect: '{e:?}'"),
+            }
+        }
         _ => println!("Failed to check if connected to access point."),
     }
 }
