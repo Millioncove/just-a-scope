@@ -255,10 +255,8 @@ async fn web_socket_server(
     }
 }
 
-fn station_auth_method() -> AuthMethod {
-    const AUTH_STR: &str = env!("station_auth_method");
-
-    match env!("station_auth_method") {
+fn auth_method_from_str(auth_str: &str) -> AuthMethod {
+    match auth_str {
         "none" => return AuthMethod::None,
         "wep" => {
             return AuthMethod::WEP;
@@ -284,7 +282,7 @@ fn station_auth_method() -> AuthMethod {
         "wpawpa2personal" => {
             return AuthMethod::WPAWPA2Personal;
         }
-        _ => panic!("Configuration value for station auth method '{AUTH_STR}' is invalid."),
+        _ => panic!("Configuration value for station auth method '{auth_str}' is invalid."),
     }
 }
 
@@ -352,7 +350,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // Station configuration.
     let sta_conf: ClientConfiguration = ClientConfiguration {
         ssid: String::<32>::try_from(env!("station_ssid")).expect("Station ssid has wrong format."),
-        auth_method: station_auth_method(),
+        auth_method: auth_method_from_str(env!("station_auth_method")),
         password: String::<64>::try_from(env!("station_password"))
             .expect("Station password has wrong format."),
         ..ClientConfiguration::default()
@@ -360,9 +358,10 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     // Access point configuration.
     let ap_conf: AccessPointConfiguration = AccessPointConfiguration {
-        ssid: String::<32>::try_from("jultomten").unwrap(),
-        auth_method: esp_wifi::wifi::AuthMethod::WPA,
-        password: String::<64>::try_from("skorsten").unwrap(),
+        ssid: String::<32>::try_from(env!("access_point_ssid")).expect("AP ssid has wrong format."),
+        auth_method: auth_method_from_str(env!("access_point_auth_method")),
+        password: String::<64>::try_from(env!("access_point_password"))
+            .expect("AP password has wrong format."),
         ..AccessPointConfiguration::default()
     };
     println!(
@@ -422,7 +421,26 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     // Spawn the process on the second core that actually performs the measurements.
     let mut cpu_control = CpuControl::new(peripherals.CPU_CTRL);
-    let snd_core_fn = || measure::measuring_task(peripherals.ADC1, peripherals.GPIO1, &mut writer);
+
+    // Get standard values from config.toml
+    let reference_voltage: f64 = env!("adc_reference_voltage").parse().unwrap();
+    let probe_disconnected_voltage: f64 = env!("probe_disconnected").parse().unwrap();
+    let max_voltage: f64 = env!("max_voltage_absolute").parse().unwrap();
+    let tolerance_factor: f64 = env!("tolerance_factor").parse().unwrap();
+    let min_voltage_difference: f64 = env!("min_voltage_difference").parse().unwrap();
+
+    let snd_core_fn = || {
+        measure::measuring_task(
+            peripherals.ADC1,
+            peripherals.GPIO1,
+            &mut writer,
+            reference_voltage,
+            probe_disconnected_voltage,
+            max_voltage,
+            tolerance_factor,
+            min_voltage_difference,
+        )
+    };
 
     let _guard = cpu_control
         .start_app_core(unsafe { &mut *addr_of_mut!(APP_CORE_STACK) }, snd_core_fn)
