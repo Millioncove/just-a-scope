@@ -10,6 +10,20 @@ use esp_hal::{
     time::now,
 };
 
+fn take_measurement<const PIN: u8>(
+    adc: &mut Adc<'_, ADC1>,
+    pin: &mut esp_hal::analog::adc::AdcPin<GpioPin<PIN>, ADC1, AdcCalBasic<ADC1>>,
+) -> u16
+where
+    GpioPin<PIN>: AdcChannel + AnalogPin,
+{
+    let mut sum = 0u32;
+    for _ in 0..32 {
+        sum += nb::block!(adc.read_oneshot(pin)).unwrap() as u32;
+    }
+    return (sum >> 5) as u16;
+}
+
 pub fn measuring_task<const L: usize, const PIN: u8>(
     adc_peripheral: ADC1,
     pin: GpioPin<PIN>,
@@ -42,7 +56,7 @@ where
 
     loop {
         let current_second: f64 = now().ticks() as f64 / 1_000_000f64;
-        let raw_adc_output = nb::block!(adc.read_oneshot(&mut pin)).unwrap();
+        let raw_adc_output = take_measurement(&mut adc, &mut pin);
         let raw_adc_voltage = raw_adc_output as f64 * reference_voltage / 4095f64;
         let adjusted_voltage =
             (raw_adc_voltage - probe_disconnected_voltage) * max_voltage / reference_voltage;
