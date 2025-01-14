@@ -11,7 +11,7 @@ password = "examplesstationpassword"
 [voltages]
 adc_reference_voltage = 3.1             # Using 11db attenuation.
 probe_disconnected = 1.1945787545787547
-max_voltage_absolute = 200
+max_voltage_absolute = 31
 
 [precision]
 tolerance_factor = 0.1 # Arbitrary value, filters points from straight lines. Higher value <=> less points.

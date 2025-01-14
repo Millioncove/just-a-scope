@@ -252,7 +252,7 @@
         let startTimePerDiv = 0;
         let REMOVE_REDUNDANT_POINTS = false;
         let TOLERANCE_FACTOR = 0.8;
-        let DRAW_POINTS = true;
+        let DRAW_POINTS = false;
 
         let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
         websocket.onmessage = async event => {
