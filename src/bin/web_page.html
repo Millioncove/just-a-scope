@@ -140,13 +140,13 @@
         }
 
         .axis-control.vertical {
-            right: 20px;
+            right: 50px;
             top: 50%;
             transform: translateY(-50%);
         }
 
         .axis-control.horizontal {
-            bottom: 20px;
+            bottom: 50px;
             left: 50%;
             transform: translateX(-50%);
         }
@@ -253,16 +253,15 @@
         let REMOVE_REDUNDANT_POINTS = false;
         let TOLERANCE_FACTOR = 0.8;
         let DRAW_POINTS = false;
+        let numDecimals = {
+            Time: 0,
+            Voltage: 0
+        };
 
-        let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
-        websocket.onmessage = async event => {
-            let data = new Float64Array(await event.data.arrayBuffer())
-            for (let i = 0; i < data.length; i += 2) {
-                addPoint(data[i + 1], data[i]);
-            }
+        Number.prototype.numDecimals = function () {
+            if (Math.floor(this.valueOf()) === this.valueOf()) return 0;
+            return this.toString().split(".")[1].length || 0;
         }
-        setInterval(drawData, 100)
-        setInterval(sortData, 2000)
 
         // Mouse event handlers for panning
         canvas.addEventListener('mousedown', (e) => {
@@ -296,6 +295,20 @@
             isDragging = false;
         });
 
+        function AdjustNumDecimals() {
+            numDecimals.Time = 0;
+            numDecimals.Voltage = 0;
+
+            while (timePerDiv.toFixed(numDecimals.Time) * 4 == timePerDiv.toFixed(numDecimals.Time) * 5) {
+                numDecimals.Time++;
+            }
+            numDecimals.Time++;
+            while (voltsPerDiv.toFixed(numDecimals.Voltage) * 4 == voltsPerDiv.toFixed(numDecimals.Voltage) * 5) {
+                numDecimals.Voltage++;
+            }
+            numDecimals.Voltage++;
+        }
+
         // Voltage scaling control
         voltageControl.addEventListener('mousedown', (e) => {
             isScalingVoltage = true;
@@ -310,8 +323,9 @@
                 const deltaY = e.clientY - scaleStartY;
                 const scaleFactor = Math.exp(deltaY * 0.01);
                 voltsPerDiv = startVoltsPerDiv * scaleFactor;
-                document.getElementById('voltsPerDiv').value = voltsPerDiv.toFixed(2);
-                voltageIndicator.textContent = voltsPerDiv.toFixed(2) + ' V/div';
+                AdjustNumDecimals();
+                document.getElementById('voltsPerDiv').value = voltsPerDiv;
+                voltageIndicator.textContent = voltsPerDiv + ' V/div';
                 drawData();
             }
         });
@@ -330,8 +344,9 @@
                 const deltaX = e.clientX - scaleStartX;
                 const scaleFactor = Math.exp(deltaX * 0.01);
                 timePerDiv = startTimePerDiv * scaleFactor;
-                document.getElementById('timePerDiv').value = timePerDiv.toFixed(2);
-                timeIndicator.textContent = timePerDiv.toFixed(2) + ' s/div';
+                AdjustNumDecimals();
+                document.getElementById('timePerDiv').value = timePerDiv;
+                timeIndicator.textContent = timePerDiv + ' s/div';
                 drawData();
             }
         });
@@ -475,7 +490,6 @@
             data.sort((a, b) => a.time - b.time);
         }
 
-        // Rest of the oscilloscope code remains the same as before
         function drawGrid() {
             const gridSizeX = canvas.width / DIVISIONS_X;
             const gridSizeY = canvas.height / DIVISIONS_Y;
@@ -491,7 +505,7 @@
                 ctx.lineTo(x, canvas.height);
                 ctx.stroke();
 
-                const time = ((i - DIVISIONS_X / 2) * timePerDiv + centerX).toFixed(2);
+                const time = ((i - DIVISIONS_X / 2) * timePerDiv + centerX).toFixed(numDecimals.Time);
                 ctx.fillStyle = '#00ff00';
                 ctx.textAlign = 'center';
                 ctx.fillText(time + 's', x, canvas.height - 5);
@@ -505,7 +519,7 @@
                 ctx.lineTo(canvas.width, y);
                 ctx.stroke();
 
-                const voltage = (((DIVISIONS_Y / 2) - i) * voltsPerDiv + centerY).toFixed(1);
+                const voltage = (((DIVISIONS_Y / 2) - i) * voltsPerDiv + centerY).toFixed(numDecimals.Voltage);
                 ctx.fillStyle = '#00ff00';
                 ctx.textAlign = 'right';
                 ctx.fillText(voltage + 'V', canvas.width - 5, y + 4);
@@ -610,7 +624,9 @@
 
         function updateDivisions() {
             voltsPerDiv = parseFloat(document.getElementById('voltsPerDiv').value);
+            numDecimals.Voltage = voltsPerDiv.numDecimals();
             timePerDiv = parseFloat(document.getElementById('timePerDiv').value);
+            numDecimals.Time = timePerDiv.numDecimals();
             drawData();
         }
 
@@ -644,6 +660,20 @@
 
         // Initial draw
         drawData();
+
+        // Websocket connection
+        if (!window.location.href.startsWith("file")) { // Allow local testing
+            let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
+            websocket.onmessage = async event => {
+                let data = new Float64Array(await event.data.arrayBuffer())
+                for (let i = 0; i < data.length; i += 2) {
+                    addPoint(data[i + 1], data[i]);
+                }
+            }
+        }
+
+        setInterval(drawData, 100)
+        setInterval(sortData, 2000)
     </script>
 </body>
 
