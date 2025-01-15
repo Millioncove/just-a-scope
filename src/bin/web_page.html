@@ -16,7 +16,11 @@
             width: 100vw;
         }
 
-        .scope-container {
+        * {
+            font-size: large;
+        }
+
+        #scope-container {
             position: relative;
             width: 100vw;
             height: 100vh;
@@ -89,8 +93,24 @@
             cursor: pointer;
         }
 
+        .overlay-button {
+            opacity: 0;
+            transition: opacity 1s;
+        }
+
+        .overlay-button.visible {
+            opacity: 1;
+        }
+
         button:hover {
             background: #008800;
+        }
+
+        #toggleFullscreen {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
         }
 
         #toggleControls {
@@ -197,15 +217,16 @@
 
 <body>
 
-    <div class="scope-container">
-        <div class="axis-control vertical" id="voltageControl">V</div>
-        <div class="axis-control horizontal" id="timeControl">T</div>
+    <div id="scope-container">
+        <div class="axis-control vertical overlay-button" id="voltageControl">V</div>
+        <div class="axis-control horizontal overlay-button" id="timeControl">T</div>
         <div class="scale-indicator vertical" id="voltageIndicator"></div>
         <div class="scale-indicator horizontal" id="timeIndicator"></div>
         <canvas id="oscilloscope"></canvas>
         <div class="axis-label y-axis-label">Voltage (V)</div>
         <div class="axis-label x-axis-label">Time (s)</div>
-        <button id="toggleControls">Menu</button>
+        <button id="toggleFullscreen" class="overlay-button">Maximize</button>
+        <button id="toggleControls" class="overlay-button">Menu</button>
         <div class="zoom-info">Use two fingers to zoom, one finger to pan</div>
 
         <div class="controls-overlay">
@@ -227,6 +248,7 @@
         const canvas = document.getElementById('oscilloscope');
         const ctx = canvas.getContext('2d');
         const controls = document.querySelector('.controls-overlay');
+        const fullscreenButton = document.getElementById('toggleFullscreen');
         const toggleButton = document.getElementById('toggleControls');
         const zoomInfo = document.querySelector('.zoom-info');
         let data = [];
@@ -254,13 +276,24 @@
         let TOLERANCE_FACTOR = 0.8;
         let DRAW_POINTS = false;
         let numDecimals = {
-            Time: 0,
-            Voltage: 0
+            Time: 1,
+            Voltage: 1
         };
+        let buttonShowTimeout = null;
 
         Number.prototype.numDecimals = function () {
             if (Math.floor(this.valueOf()) === this.valueOf()) return 0;
             return this.toString().split(".")[1].length || 0;
+        }
+
+        function showButtons() {
+            if (buttonShowTimeout) clearTimeout(buttonShowTimeout);
+            document.querySelectorAll('.overlay-button:not(visible)').forEach(button => button.classList.add('visible'));
+            buttonShowTimeout = setTimeout(() => {
+                if (!controls.classList.contains('visible')) {
+                    document.querySelectorAll('.overlay-button.visible').forEach(button => button.classList.remove('visible'))
+                }
+            }, 1500);
         }
 
         // Mouse event handlers for panning
@@ -273,6 +306,8 @@
         });
 
         canvas.addEventListener('mousemove', (e) => {
+            showButtons();
+
             if (isDragging) {
                 const deltaX = e.clientX - lastX;
                 const deltaY = e.clientY - lastY;
@@ -368,6 +403,7 @@
         });
 
         timeControl.addEventListener('touchstart', (e) => {
+            showButtons();
             isScalingTime = true;
             scaleStartX = e.touches[0].clientX;
             startTimePerDiv = timePerDiv;
@@ -376,6 +412,7 @@
         });
 
         window.addEventListener('touchmove', (e) => {
+            showButtons();
             if (isScalingVoltage) {
                 const deltaY = e.touches[0].clientY - scaleStartY;
                 const scaleFactor = Math.exp(deltaY * 0.01);
@@ -411,6 +448,16 @@
 
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
+
+        fullscreenButton.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.getElementById('scope-container').requestFullscreen();
+                fullscreenButton.textContent = 'X';
+            } else {
+                document.exitFullscreen();
+                fullscreenButton.textContent = 'Maximize';
+            }
+        });
 
         // Update menu button position when menu opens/closes
         toggleButton.addEventListener('click', () => {
@@ -498,7 +545,7 @@
             ctx.lineWidth = 1;
 
             // Draw vertical grid lines and time labels
-            for (let i = 0; i <= DIVISIONS_X; i++) {
+            for (let i = 1; i < DIVISIONS_X; i++) {
                 const x = i * gridSizeX;
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
@@ -512,7 +559,7 @@
             }
 
             // Draw horizontal grid lines and voltage labels
-            for (let i = 0; i <= DIVISIONS_Y; i++) {
+            for (let i = 1; i < DIVISIONS_Y; i++) {
                 const y = i * gridSizeY;
                 ctx.beginPath();
                 ctx.moveTo(0, y);
@@ -532,7 +579,7 @@
             ctx.moveTo(canvas.width / 2, 0);
             ctx.lineTo(canvas.width / 2, canvas.height);
             ctx.moveTo(0, canvas.height / 2);
-            ctx.lineTo(canvas.width, canvas.height / 2);
+            ctx.lineTo(canvas.width * 0.98, canvas.height / 2);
             ctx.stroke();
         }
 
