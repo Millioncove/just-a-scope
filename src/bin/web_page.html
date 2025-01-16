@@ -120,6 +120,13 @@
             z-index: 1000;
         }
 
+        #toggleScroll {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+
         .zoom-info {
             position: absolute;
             bottom: 40px;
@@ -227,6 +234,7 @@
         <div class="axis-label x-axis-label">Time (s)</div>
         <button id="toggleFullscreen" class="overlay-button">Maximize</button>
         <button id="toggleControls" class="overlay-button">Menu</button>
+        <button id="toggleScroll" class="overlay-button">Unlock</button>
         <div class="zoom-info">Use two fingers to zoom, one finger to pan</div>
 
         <div class="controls-overlay">
@@ -249,7 +257,8 @@
         const ctx = canvas.getContext('2d');
         const controls = document.querySelector('.controls-overlay');
         const fullscreenButton = document.getElementById('toggleFullscreen');
-        const toggleButton = document.getElementById('toggleControls');
+        const menuButton = document.getElementById('toggleControls');
+        const toggleScrollButton = document.getElementById('toggleScroll');
         const zoomInfo = document.querySelector('.zoom-info');
         let data = [];
         let isDragging = false;
@@ -280,6 +289,11 @@
             Voltage: 1
         };
         let buttonShowTimeout = null;
+        let scrolling = {
+            _locked: true,
+            get locked() { return this._locked },
+            set locked(value) { this._locked = value; toggleScrollButton.textContent = value ? 'Unlock' : 'Lock' }
+        };
 
         Number.prototype.numDecimals = function () {
             if (Math.floor(this.valueOf()) === this.valueOf()) return 0;
@@ -300,6 +314,7 @@
         canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) { // Left mouse button
                 isDragging = true;
+                scrolling.locked = false;
                 lastX = e.clientX;
                 lastY = e.clientY;
             }
@@ -460,9 +475,19 @@
         });
 
         // Update menu button position when menu opens/closes
-        toggleButton.addEventListener('click', () => {
+        menuButton.addEventListener('click', () => {
             controls.classList.toggle('visible');
-            toggleButton.classList.toggle('menu-open');
+            menuButton.classList.toggle('menu-open');
+        });
+
+        toggleScrollButton.addEventListener('click', () => {
+            if (toggleScrollButton.textContent === 'Lock') {
+                toggleScrollButton.textContent = 'Unlock';
+                scrolling.locked = true;
+            } else {
+                toggleScrollButton.textContent = 'Lock';
+                scrolling.locked = false;
+            }
         });
 
         // Show zoom info temporarily
@@ -488,6 +513,7 @@
             } else if (e.touches.length === 1) {
                 // Single finger pan
                 isDragging = true;
+                scrolling.locked = false;
                 lastX = e.touches[0].clientX;
                 lastY = e.touches[0].clientY;
             }
@@ -579,7 +605,7 @@
             ctx.moveTo(canvas.width / 2, 0);
             ctx.lineTo(canvas.width / 2, canvas.height);
             ctx.moveTo(0, canvas.height / 2);
-            ctx.lineTo(canvas.width * 0.98, canvas.height / 2);
+            ctx.lineTo(canvas.width * 0.95, canvas.height / 2);
             ctx.stroke();
         }
 
@@ -604,7 +630,9 @@
             ctx.lineWidth = 2;
             ctx.beginPath();
 
-            data.forEach((point, i) => {
+            for (i = data.length - 1; i > 0 && (i == data.length - 1 || data[i + 1].time > xMin); i--) {
+                if (data[i - 1].time > xMax) { continue; }
+                const point = data[i];
                 const x = mapValue(point.time, xMin, xMax, 0, canvas.width);
                 const y = mapValue(point.voltage, yMax, yMin, 0, canvas.height);
 
@@ -614,7 +642,7 @@
                     ctx.lineTo(x, y);
                     if (DRAW_POINTS) { ctx.arc(x, y, 2, 0, 2 * Math.PI); }
                 }
-            });
+            }
 
             ctx.stroke();
         }
@@ -701,6 +729,11 @@
             URL.revokeObjectURL(url);
         }
 
+        function isLastPointOutside() {
+            const xMax = centerX + (DIVISIONS_X / 2) * timePerDiv;
+            return data[data.length - 1].time > xMax;
+        }
+
         // Add input event listeners
         document.getElementById('voltsPerDiv').addEventListener('change', updateDivisions);
         document.getElementById('timePerDiv').addEventListener('change', updateDivisions);
@@ -713,8 +746,20 @@
             let websocket = new WebSocket("ws://" + window.location.host + ":43822", "test");
             websocket.onmessage = async event => {
                 let data = new Float64Array(await event.data.arrayBuffer())
+                const xMax = centerX + (DIVISIONS_X / 2) * timePerDiv;
                 for (let i = 0; i < data.length; i += 2) {
-                    addPoint(data[i + 1], data[i]);
+                    let time = data[i + 1];
+                    let voltage = data[i];
+                    addPoint(time, voltage);
+                    // Scroll with time if locked
+                    while (scrolling.locked && isLastPointOutside()) {
+                        centerX += DIVISIONS_X * timePerDiv;
+                    }
+
+                    // Make sure at least one point is in frame by adjusting y-axis
+                    if (voltage > centerY + voltsPerDiv * DIVISIONS_Y / 2 || voltage < centerY - voltsPerDiv * DIVISIONS_Y / 2) {
+                        centerY = voltage;
+                    }
                 }
             }
         }
