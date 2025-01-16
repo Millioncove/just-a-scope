@@ -33,6 +33,7 @@ pub fn measuring_task<const L: usize, const PIN: u8>(
     max_voltage: f64,
     tolerance_factor: f64,
     min_voltage_difference: f64,
+    delay_nanoseconds: u32,
 ) -> !
 where
     GpioPin<PIN>: AdcChannel + AnalogPin,
@@ -85,6 +86,6 @@ where
         }
         last = new_point;
 
-        delay.delay_nanos(100u32);
+        delay.delay_nanos(delay_nanoseconds);
     }
 }
