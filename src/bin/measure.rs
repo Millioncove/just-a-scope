@@ -9,6 +9,7 @@ use esp_hal::{
     prelude::nb,
     time::now,
 };
+use esp_println::println;
 
 fn take_measurement<const PIN: u8>(
     adc: &mut Adc<'_, ADC1>,
@@ -56,6 +57,7 @@ where
     };
 
     loop {
+        let measurement_start_time = now();
         let current_second: f64 = now().ticks() as f64 / 1_000_000f64;
         let raw_adc_output = take_measurement(&mut adc, &mut pin);
         let raw_adc_voltage = raw_adc_output as f64 * reference_voltage / 4095f64;
@@ -87,5 +89,9 @@ where
         last = new_point;
 
         delay.delay_nanos(delay_nanoseconds);
+        let tick_diff = now()
+            .checked_sub_duration(measurement_start_time.duration_since_epoch())
+            .unwrap();
+        println!("{tick_diff} ticks/microseconds between measurements.");
     }
 }
