@@ -264,13 +264,13 @@
         let isDragging = false;
         let lastX = 0;
         let lastY = 0;
-        let centerX = 0;
-        let centerY = 0;
         let voltsPerDiv = 2;
-        let timePerDiv = 30;
+        let timePerDiv = 1;
         let lastPinchDistance = null;
         const DIVISIONS_X = 10;
         const DIVISIONS_Y = 8;
+        let centerX = DIVISIONS_X / 2 * timePerDiv;
+        let centerY = 0;
         const voltageControl = document.getElementById('voltageControl');
         const timeControl = document.getElementById('timeControl');
         const voltageIndicator = document.getElementById('voltageIndicator');
@@ -291,6 +291,7 @@
         let buttonShowTimeout = null;
         let scrolling = {
             _locked: true,
+            onlyCompleteFrames: false,
             get locked() { return this._locked },
             set locked(value) { this._locked = value; toggleScrollButton.textContent = value ? 'Unlock' : 'Lock' }
         };
@@ -692,7 +693,7 @@
         function addPointAndDraw(time, voltage) {
             if (!isNaN(time) && !isNaN(voltage)) {
                 data.push({ time, voltage });
-                data.sort((a, b) => a.time - b.time);
+                sortData();
                 drawData();
             }
         }
@@ -730,7 +731,11 @@
         }
 
         function isLastPointOutside() {
-            const xMax = centerX + (DIVISIONS_X / 2) * timePerDiv;
+            const halfAScreen = DIVISIONS_X / 2 * timePerDiv;
+            const xMax = centerX + halfAScreen;
+            if (scrolling.onlyCompleteFrames) {
+                return data[data.length - 1].time > xMax + halfAScreen;
+            }
             return data[data.length - 1].time > xMax;
         }
 
@@ -753,6 +758,7 @@
                     addPoint(time, voltage);
                     // Scroll with time if locked
                     while (scrolling.locked && isLastPointOutside()) {
+                        sortData();
                         centerX += DIVISIONS_X * timePerDiv;
                     }
 
