@@ -58,8 +58,9 @@ where
         let current_second: f64 = now().ticks() as f64 / 1_000_000f64;
         let raw_adc_output = take_measurement(&mut adc, &mut pin, samples_per_point);
         let raw_adc_voltage = raw_adc_output as f64 * reference_voltage / 4095f64;
-        let adjusted_voltage =
-            (raw_adc_voltage - probes_shorted_voltage) * max_voltage / reference_voltage;
+        let adjusted_voltage = (raw_adc_voltage - probes_shorted_voltage) * max_voltage * 2f64
+            / reference_voltage
+            - probes_shorted_voltage;
         let new_point = OscilliscopePoint {
             voltage: adjusted_voltage,
             second: current_second,
