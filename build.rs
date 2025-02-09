@@ -17,7 +17,7 @@ struct AccessPoint {
 #[derive(Deserialize)]
 struct Voltages {
     adc_reference_voltage: f64,
-    probe_disconnected: f64,
+    probes_shorted: f64,
     max_voltage_absolute: f64,
 }
 
@@ -25,7 +25,7 @@ struct Voltages {
 struct Precision {
     tolerance_factor: f64,
     min_voltage_difference: f64,
-    initial_frequency: f64,
+    samples_per_point: u32,
 }
 
 #[derive(Deserialize)]
@@ -42,7 +42,7 @@ fn add_env_var(name: &str, value: &str) {
 
 fn main() {
     let config: Config =
-        toml::from_str(include_str!("config.toml")).expect("config.toml had unexpected format");
+        toml::from_str(include_str!("Settings.toml")).expect("Settings.toml had unexpected format");
 
     // Station
     let sta_creds = config.station;
@@ -71,10 +71,7 @@ fn main() {
         "adc_reference_voltage",
         &voltages.adc_reference_voltage.to_string(),
     );
-    add_env_var(
-        "probe_disconnected",
-        &voltages.probe_disconnected.to_string(),
-    );
+    add_env_var("probes_shorted", &voltages.probes_shorted.to_string());
     add_env_var(
         "max_voltage_absolute",
         &voltages.max_voltage_absolute.to_string(),
@@ -89,8 +86,8 @@ fn main() {
         &precision.min_voltage_difference.to_string(),
     );
     add_env_var(
-        "initial_frequency",
-        &precision.initial_frequency.to_string(),
+        "samples_per_point",
+        &precision.samples_per_point.to_string(),
     );
 
     println!("cargo:rustc-link-arg-bins=-Tlinkall.x");

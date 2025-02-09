@@ -14,7 +14,8 @@ esp-backtrace = { version = "0.14.2", features = [
 esp-alloc = "0.5.0"
 esp-hal = { version = "0.22.0", features = ["esp32s3"] }
 esp-println = { version = "0.12.0", features = ["esp32s3", "log"] }
-esp-wifi = { version = "0.11.0", features = ["esp32s3", "wifi"] }
+log = { version = "0.4.21" }
+esp-wifi = { version = "0.11.0", features = ["esp32s3", "wifi", "log"] }
 critical-section = "1.2.0"
 heapless = "0.8.0"
 embedded-time = "0.12.1"

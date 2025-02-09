@@ -1,5 +1,5 @@
 [access_point] # This is the WIFI network that the oscilloscope will create.
-ssid = "Oscilloscope"
+ssid = "just-a-scope"
 auth_method = "WPA"
 password = "incrediblysecurepassword"
 
@@ -10,10 +10,10 @@ password = "examplesstationpassword"
 
 [voltages]
 adc_reference_voltage = 3.1             # Using 11db attenuation.
-probe_disconnected = 1.1945787545787547
-max_voltage_absolute = 31
+probes_shorted = 1.1241758241758242     # 0 Volts across probes =/= 0 Volts at ADC.
+max_voltage_absolute = 31               # "Peak to peak" is this voltage x2.
 
 [precision]
 tolerance_factor = 0.1 # Arbitrary value, filters points from straight lines. Higher value <=> less points.
 min_voltage_difference = 0.3 # Needed between two measurements, to be plotted. 
-initial_frequency = 10_000_000 # (Hz) Initial frequency for the oscilloscope.
+samples_per_point = 1 # Number of samples to average for each point. More samples => less noise, lower max frequency.

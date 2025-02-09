@@ -611,6 +611,7 @@ dependencies = [
  "esp-synopsys-usb-otg",
  "esp32s3",
  "fugit",
+ "log",
  "nb 1.1.0",
  "paste",
  "portable-atomic",
@@ -731,6 +732,7 @@ dependencies = [
  "fugit",
  "heapless 0.8.0",
  "libm",
+ "log",
  "num-derive",
  "num-traits",
  "portable-atomic",
@@ -746,6 +748,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7730d6093853119088bbb793e3383801965ebe8fcf91e0817781d94628aaf718"
 dependencies = [
  "anyhow",
+ "log",
 ]
 
 [[package]]
@@ -949,6 +952,7 @@ dependencies = [
  "heapless 0.8.0",
  "httparse",
  "libm",
+ "log",
  "serde",
  "toml",
  "zerocopy",

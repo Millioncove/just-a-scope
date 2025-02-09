@@ -9,7 +9,6 @@ use core::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     ptr::addr_of_mut,
 };
-
 use edge_http::{
     io::{
         server::{self as http, Handler},
@@ -424,12 +423,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     // Get standard values from config.toml
     let reference_voltage: f64 = env!("adc_reference_voltage").parse().unwrap();
-    let probe_disconnected_voltage: f64 = env!("probe_disconnected").parse().unwrap();
+    let probes_shorted_voltage: f64 = env!("probes_shorted").parse().unwrap();
     let max_voltage: f64 = env!("max_voltage_absolute").parse().unwrap();
     let tolerance_factor: f64 = env!("tolerance_factor").parse().unwrap();
     let min_voltage_difference: f64 = env!("min_voltage_difference").parse().unwrap();
-    let delay_nanoseconds: u32 =
-        (1_000_000_000f64 / env!("initial_frequency").parse::<f64>().unwrap()) as u32;
+    let samples_per_point: u32 = env!("samples_per_point").parse().unwrap();
 
     let snd_core_fn = || {
         measure::measuring_task(
@@ -437,11 +435,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             peripherals.GPIO1,
             &mut writer,
             reference_voltage,
-            probe_disconnected_voltage,
+            probes_shorted_voltage,
             max_voltage,
             tolerance_factor,
             min_voltage_difference,
-            delay_nanoseconds,
+            samples_per_point,
         )
     };
 
